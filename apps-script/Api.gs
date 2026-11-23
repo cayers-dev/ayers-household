@@ -15,7 +15,7 @@
 
 const CORE_CONFIG = {
    // OAuth "Web application" client ID from Google Cloud Console.
-   clientId: "PASTE_CLIENT_ID",
+   clientId: "772806134687-do01tquteqe9iufotr239c2dqsf100ef.apps.googleusercontent.com",
    appName: "Ayers Household",
    // Signed out after this many minutes without using the app (each request renews it).
    sessionMinutes: 60,
