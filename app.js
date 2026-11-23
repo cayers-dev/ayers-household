@@ -9,7 +9,7 @@
   const CFG = window.HH_CONFIG || {};
   const TOKEN_KEY = "hh_id_token";     // Google sign-in pass (only until the server gives a session)
   const SESSION_KEY = "hh_session";    // the app's own session: { token, exp }
-  const APP_VERSION = "2";
+  const APP_VERSION = "3";
 
   const state = {
     token: null, session: null, sessionExp: 0,
@@ -403,6 +403,8 @@
 
   // ---------- Home ----------
   function viewHome() {
+    // A module saved something since Home was loaded: refresh Due Soon quietly.
+    if (state.homeStale) { state.homeStale = false; setTimeout(refreshInBackground, 0); }
     const days = state.me.dueSoonDays || 30;
     const due = state.dueSoon || [];
     const dueHtml = due.length

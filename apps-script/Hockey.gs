@@ -315,6 +315,7 @@ function hockeyLoad_(req, user) {
    const def = hockeyDef_();
    const can = a => coreCan_(user, "hockey", a, "view");
    if (!def.areas.some(can)) throw coreError_("FORBIDDEN", "You don't have access to Travel Hockey.");
+   modPrefetch_(def);   // every tab in one read
    const seasons = modRows_(def, "seasons").sort((a, b) => String(b["Start Date"]).localeCompare(String(a["Start Date"])));
    const season = (req.seasonId && seasons.find(s => s["Season ID"] === req.seasonId)) || hockeyCurrentSeason_(def);
    const sid = season ? season["Season ID"] : "";
@@ -378,6 +379,7 @@ function hockeySetExclude_(req, user) {
 function hockeyHome_(user, days) {
    const def = hockeyDef_();
    const out = { dueSoon: [] };
+   modPrefetch_(def);
    const season = hockeyCurrentSeason_(def);
    if (!season) return out;
    const today = hockeyToday_();
@@ -439,7 +441,7 @@ function hockeySetup() {
    modBuildTabs_(def);
    const owner = coreGetUsers_(true).find(u => u.admin) || { id: "USR-1" };
 
-   modSeed_(def, "seasons", [{ "Season": "2026-27", "Start Date": new Date(2026, 3, 27), "End Date": new Date(2027, 1, 28),
+   modSeed_(def, "seasons", [{ "Season": "2026-27", "Start Date": coreDate_("2026-04-27"), "End Date": coreDate_("2027-02-28"),
       "Share %": 20, "Past Due Extra": 15, "Notes": "From the original 2026-27 Travel Hockey sheet" }], owner);
    modSeed_(def, "chores", HOCKEY_SEED.chores.map(c => ({ "Chore": c[0], "Amount": c[1] })), owner);
    modSeed_(def, "venues", HOCKEY_SEED.venues.map(v => ({ "Name": v })), owner);
@@ -481,3 +483,156 @@ const HOCKEY_SEED = {
       [4, "1 Minute wall sit (Daily)"], [5, "All dishes for week - No Week"], [6, "30 Jumping Jacks (Daily)"],
       [7, "Loss of Phone for 1 Day"], [8, "Loss of Gulls Games (2 events/ games) **next planned attending"]]
 };
+
+
+// ------------------------------------------------------------
+// One-time fix (run hockeyFix1() once): dates and speed.
+//  - The Travel Hockey sheet now uses the same time zone as Core (Pacific),
+//    so dates read back as the day they were entered.
+//  - Clears the unticked boxes that filled every tab to row 1,000 (each read
+//    covered all of them) and keeps the tick boxes as column validation.
+//  - Same tidy for the Core Users tab.
+// ------------------------------------------------------------
+function hockeyFix1() {
+   CORE_GRID = {}; MOD_ROWS = {};
+   const def = hockeyDef_();
+   const ss = modSs_("hockey");
+   const tzBefore = ss.getSpreadsheetTimeZone();
+   ss.setSpreadsheetTimeZone(coreTz_());
+   const lines = ["Travel Hockey time zone: " + tzBefore + " -> " + coreTz_()].concat(modTidyTabs_(def));
+   const users = coreSheet_(CORE_CONFIG.tabs.users);
+   const last = users.getLastRow();
+   const ids = users.getRange(2, 1, Math.max(1, last - 1), 1).getValues();
+   let used = 1;
+   ids.forEach((r, i) => { if (String(r[0]).trim() !== "") used = i + 2; });
+   if (last > used) users.getRange(used + 1, 1, last - used, users.getLastColumn()).clearContent();
+   users.getRange("D2:E").setDataValidation(modCheckbox_());
+   lines.push("Core Users: " + (used - 1) + " people" + (last > used ? " (cleared " + (last - used) + " empty rows)" : ""));
+   CORE_GRID = {}; MOD_ROWS = {};
+   const s = modRows_(def, "seasons")[0];
+   if (s) lines.push("Season " + s["Season"] + ": " + s["Start Date"] + " to " + s["End Date"]);
+   console.log(lines.join("\n"));
+   return lines;
+}
+
+
+// ------------------------------------------------------------
+// Import from the original "2026-27 Travel Hockey" sheet (run hockeyImport2026() once).
+// Brings in every earning (with the price logged at the time), every expense, the
+// excluded weeks and the chore plan on the Monthly Chore Schedule tab. Entries are
+// added as Chris (USR-1). Refuses to run twice (Settings ▸ Imported 2026-27).
+// ------------------------------------------------------------
+const HOCKEY_IMPORT_SOURCE = "17rYceU8_xX_k2P89PKs2wxxe-6Cr5hDPiJyh5eiL-38";
+
+function hockeyImport2026() {
+   CORE_GRID = {}; MOD_ROWS = {};
+   const def = hockeyDef_();
+   if (modRows_(def, "settings", true).some(r => r["Setting"] === "Imported 2026-27")) {
+      throw new Error("Already imported (Settings tab ▸ Imported 2026-27). Delete that row first only if you really mean to import again.");
+   }
+   const owner = coreGetUsers_(true).find(u => u.id === "USR-1") || coreGetUsers_(true).find(u => u.admin);
+   const season = modRows_(def, "seasons").find(x => x["Season"] === "2026-27");
+   if (!season) throw new Error("The 2026-27 season is missing.");
+   const sid = season["Season ID"];
+   const src = SpreadsheetApp.openById(HOCKEY_IMPORT_SOURCE);
+   const stz = src.getSpreadsheetTimeZone();
+   const isoOf = v => v instanceof Date ? Utilities.formatDate(v, stz, "yyyy-MM-dd") : "";
+   const norm = x => String(x || "").replace(/\s+/g, " ").trim().toLowerCase();
+   const problems = [];
+
+   // ---- Earnings: "Item" is "Chore name - price"; the Amount column is what was paid.
+   const chores = modRows_(def, "chores", true);
+   const choreByName = {};
+   chores.forEach(c => choreByName[norm(c["Chore"])] = c);
+   const ev = src.getSheetByName("Earnings").getDataRange().getValues();
+   const eh = ev.findIndex(r => String(r[0]).trim() === "Date" && String(r[1]).trim() === "Item");
+   const earnings = [];
+   ev.slice(eh + 1).forEach((r, i) => {
+      const day = isoOf(r[0]);
+      if (!day || String(r[1]).trim() === "") return;
+      const name = String(r[1]).replace(/\s*-\s*[\d.]+\s*$/, "").trim();
+      const chore = choreByName[norm(name)];
+      if (!chore) { problems.push("Earnings row " + (eh + i + 2) + ": no chore called " + name); return; }
+      earnings.push({ "Date": coreDate_(day), "Chore ID": chore["Chore ID"], "Chore Name": chore["Chore"],
+         "Amount": Number(r[2]) || 0, "Season ID": sid, "Notes": String(r[3] || "").trim() });
+   });
+
+   // ---- Expenses
+   const venues = modRows_(def, "venues", true);
+   const venueByName = {};
+   venues.forEach(v => venueByName[norm(v["Name"])] = v);
+   const cats = modListValues_(def, "Expense Category");
+   const xv = src.getSheetByName("Expenses").getDataRange().getValues();
+   const xh = xv[0].map(h => String(h).trim());
+   const col = n => xh.findIndex(h => h.replace(/\s+/g, "").toLowerCase() === n.replace(/\s+/g, "").toLowerCase());
+   const expenses = [];
+   xv.slice(1).forEach((r, i) => {
+      const day = isoOf(r[col("Date")]);
+      const amount = r[col("Amount")];
+      if (!day || amount === "" || amount === null) return;
+      const cat = cats.find(c => norm(c.value) === norm(r[col("Category")]));
+      if (!cat) { problems.push("Expenses row " + (i + 2) + ": category " + r[col("Category")] + " isn't on the list"); return; }
+      const locName = String(r[col("Location")] || "").trim();
+      const venue = locName ? venueByName[norm(locName)] : null;
+      if (locName && !venue) { problems.push("Expenses row " + (i + 2) + ": no venue called " + locName); return; }
+      const nb = r[col("Non-Billable")];
+      expenses.push({ "Date": coreDate_(day), "Category": cat.value, "Item": String(r[col("Item")] || "").trim(),
+         "Location ID": venue ? venue["Venue ID"] : "", "Amount": Number(amount) || 0,
+         "Non-Billable": nb === true || String(nb).toUpperCase() === "TRUE", "Sport": hockeySetting_(def, "Default Sport", "Hockey"),
+         "Season ID": sid, "Notes": "" });
+   });
+
+   // ---- Excluded weeks
+   const wv = src.getSheetByName("WeeklyTotals").getDataRange().getValues();
+   const wh = wv[0].map(h => String(h).trim());
+   const flags = [];
+   wv.slice(1).forEach(r => {
+      const day = isoOf(r[wh.indexOf("Week Start")]);
+      const ex = r[wh.indexOf("Exclude")];
+      if (day && (ex === true || String(ex).toUpperCase() === "TRUE")) {
+         flags.push({ "Season ID": sid, "Week Start": coreDate_(day), "Exclude": true, "Note": "From the original sheet" });
+      }
+   });
+
+   // ---- Chore plan (Monthly Chore Schedule: month in A1, year in C1, Date | Day | Chores rows)
+   const plan = [];
+   const pv = src.getSheetByName("Monthly Chore Schedule").getDataRange().getValues();
+   const months = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+   const mi = months.indexOf(norm(pv[0][0])), year = Number(pv[0][2]);
+   if (mi !== -1 && year) {
+      const ph = pv.findIndex(r => String(r[0]).trim() === "Date" && String(r[2]).trim() === "Chores");
+      pv.slice(ph + 1).forEach(r => {
+         const dnum = Number(r[0]);
+         if (!dnum || String(r[2]).trim() === "") return;
+         const day = year + "-" + String(mi + 1).padStart(2, "0") + "-" + String(dnum).padStart(2, "0");
+         String(r[2]).split(/[\n,;]+/).map(x => x.trim()).filter(Boolean).forEach(item => {
+            const chore = choreByName[norm(item.replace(/\s*-\s*[\d.]+\s*$/, ""))];
+            if (!chore) { problems.push("Chore plan " + day + ": no chore called " + item); return; }
+            const doneAlready = earnings.some(e => e["Chore ID"] === chore["Chore ID"] && Utilities.formatDate(e["Date"], coreTz_(), "yyyy-MM-dd") === day);
+            plan.push({ "Date": coreDate_(day), "Chore ID": chore["Chore ID"], "Chore Name": chore["Chore"], "Season ID": sid,
+               "Status": doneAlready ? "Done" : "Planned", "Earning ID": "", "Notes": "" });
+         });
+      });
+   }
+
+   if (problems.length) throw new Error("Nothing imported. Fix these first:\n" + problems.join("\n"));
+   const lock = LockService.getScriptLock();
+   lock.waitLock(20000);
+   try {
+      const ne = modBulkInsert_(def, "earnings", earnings, owner).length;
+      const nx = modBulkInsert_(def, "expenses", expenses, owner).length;
+      const nf = modBulkInsert_(def, "weekflags", flags, owner).length;
+      const np = modBulkInsert_(def, "plan", plan, owner).length;
+      modBulkInsert_(def, "settings", [{ "Setting": "Imported 2026-27", "Value": Utilities.formatDate(new Date(), coreTz_(), "yyyy-MM-dd HH:mm"),
+         "Notes": "From the 2026-27 Travel Hockey sheet (" + HOCKEY_IMPORT_SOURCE + ")" }], owner);
+      const total = earnings.reduce((s2, e) => s2 + e["Amount"], 0);
+      const summary = ne + " earnings ($" + total.toFixed(2) + "), " + nx + " expenses, " + nf + " excluded week(s), " + np + " planned chore(s)";
+      coreLog_(owner, "hockey", "Import", "Travel Hockey", "2026-27", "From the original sheet: " + summary, true);
+      coreFlushLog_();
+      SpreadsheetApp.flush();
+      console.log("Imported " + summary);
+      return summary;
+   } finally {
+      lock.releaseLock();
+   }
+}

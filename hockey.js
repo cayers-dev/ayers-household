@@ -83,15 +83,17 @@
       C.busy(true);
       let res;
       try {
-        res = await C.api(action, Object.assign({ module: "hockey", seasonId: hk.seasonId }, payload));
+        // reload: the server answers with the fresh Travel Hockey data in the same reply.
+        res = await C.api(action, Object.assign({ module: "hockey", seasonId: hk.seasonId, reload: true }, payload));
       } catch (err) {
         if (["AUTH", "NOT_ALLOWED", "SETUP"].indexOf(err.code) !== -1) return C.authStop(err);
         throw err;
       } finally { C.busy(false); }
       toast((typeof msg === "function" ? msg(res) : msg) || "Saved");
-      await load();
+      if (res && res.moduleData) { hk.data = res.moduleData; hk.seasonId = res.moduleData.seasonId; }
+      else await load();
+      C.state.homeStale = true;   // Home's Due Soon refreshes next time Home is shown
       C.render();
-      C.refreshInBackground();
       return res || true;
     },
     reload: () => load(),

@@ -74,6 +74,7 @@ function doPost(e) {
    try {
       const req = JSON.parse((e && e.postData && e.postData.contents) || "{}");
       if (req.action === "ping") return coreJson_({ ok: true, app: CORE_CONFIG.appName });
+      corePrefetch_();   // Permissions, Modules, Areas, Settings in one read (Speed below)
       const user = req.session ? coreVerifySession_(req.session) : coreVerifyUser_(req.idToken);
       const result = coreRoute_(req, user);
       coreFlushLog_();
@@ -99,12 +100,12 @@ function coreRoute_(req, user) {
       case "setChangeLog":     return coreWrite_(() => coreSetChangeLog_(req, user));
       case "changeLog":        return coreReadChangeLog_(req, user);
       // Modules (Modules.gs): shared add / edit / delete for every module's tables
-      case "modAdd":           return coreWrite_(() => modAdd_(req, user));
-      case "modUpdate":        return coreWrite_(() => modUpdate_(req, user));
-      case "modDelete":        return coreWrite_(() => modDelete_(req, user));
-      case "modSetActive":     return coreWrite_(() => modSetActive_(req, user));
-      case "modRestore":       return coreWrite_(() => modRestore_(req, user));
-      case "modPurge":         return coreWrite_(() => modPurge_(req, user));
+      case "modAdd":           return modReply_(req, user, () => modAdd_(req, user));
+      case "modUpdate":        return modReply_(req, user, () => modUpdate_(req, user));
+      case "modDelete":        return modReply_(req, user, () => modDelete_(req, user));
+      case "modSetActive":     return modReply_(req, user, () => modSetActive_(req, user));
+      case "modRestore":       return modReply_(req, user, () => modRestore_(req, user));
+      case "modPurge":         return modReply_(req, user, () => modPurge_(req, user));
       case "modDeleted":       return modDeleted_(req, user);
       default:
          // Module-specific actions are named "<module>.<action>" (e.g. hockey.load).
@@ -633,21 +634,98 @@ function coreLastDataRow_(sheet) {
    return 1;
 }
 
-// Adds a row below the last data row and writes values under their headers.
-// Columns filled by a formula in the header row (e.g. User Name) are never written.
-function coreAppendRow_(sheet, values) {
+// Adds a row below the last data row and writes values under their headers, in as few
+// writes as possible (one per run of columns). Columns not given are left untouched, so
+// columns filled by a formula in the header row (e.g. User Name) keep working.
+// fill = true: every column is written (blanks for the ones not given) in one write.
+function coreAppendRow_(sheet, values, fill) {
    const hm = coreHeaderMap_(sheet);
    const row = coreLastDataRow_(sheet) + 1;
    if (row > sheet.getMaxRows()) sheet.insertRowAfter(sheet.getMaxRows());
-   const line = new Array(hm.lastCol).fill(null);
+   const line = new Array(hm.lastCol).fill(fill ? "" : null);
    Object.keys(values).forEach(h => {
       const c = hm.map[h.toLowerCase()];
-      if (c && values[h] !== undefined) line[c - 1] = values[h];
+      if (c && values[h] !== undefined && values[h] !== null) line[c - 1] = values[h];
    });
-   // Write each cell that has a value (leaves formula-driven columns alone).
-   line.forEach((v, i) => { if (v !== null && v !== "") sheet.getRange(row, i + 1).setValue(v); });
+   let i = 0;
+   while (i < line.length) {
+      if (line[i] === null) { i++; continue; }
+      let j = i;
+      while (j + 1 < line.length && line[j + 1] !== null) j++;
+      sheet.getRange(row, i + 1, 1, j - i + 1).setValues([line.slice(i, j + 1)]);
+      i = j + 1;
+   }
    delete CORE_GRID[coreGridKey_(sheet)];
    return row;
+}
+
+// ------------------------------------------------------------
+// Dates. Every date is read and written in the Core sheet's time zone
+// (America/Los_Angeles), whatever the script project's own zone is, so
+// 2026-11-23 is always Nov 23 in every sheet.
+// ------------------------------------------------------------
+function coreTz_() { return coreSs_().getSpreadsheetTimeZone(); }
+// "2026-11-23" -> midnight that day; "2026-11-23T18:30" -> that minute.
+function coreDate_(iso) {
+   const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);
+   if (!m) throw coreError_("INVALID", "Dates must look like 2026-11-23.");
+   return Utilities.parseDate(m[1] + "-" + m[2] + "-" + m[3] + " " + (m[4] || "00") + ":" + (m[5] || "00"), coreTz_(), "yyyy-MM-dd HH:mm");
+}
+
+// ------------------------------------------------------------
+// Speed: reading tabs in one request.
+// One getDataRange() per tab costs ~0.1-0.3 s each, so tabs are read together
+// through the Google Sheets API (Advanced Service "Sheets", turned on under
+// Services in the script editor). Without it, tabs are read one by one as before.
+// ------------------------------------------------------------
+
+// Reads the named tabs of a spreadsheet in one request into CORE_GRID.
+// dateCols: { tabName: { headerName: "date" | "datetime" } } -> those columns come back
+// as "yyyy-MM-dd" / "yyyy-MM-ddTHH:mm" text (the sheet's wall-clock date, no time zone maths).
+function coreBatchRead_(ss, names, dateCols) {
+   if (typeof Sheets === "undefined") return false;
+   try {
+      const sheets = names.map(n => ss.getSheetByName(n)).filter(Boolean);
+      if (!sheets.length) return true;
+      const res = Sheets.Spreadsheets.Values.batchGet(ss.getId(), {
+         ranges: sheets.map(sh => "'" + sh.getName().replace(/'/g, "''") + "'"),
+         valueRenderOption: "UNFORMATTED_VALUE", dateTimeRenderOption: "SERIAL_NUMBER"
+      }).valueRanges || [];
+      sheets.forEach((sh, i) => {
+         const raw = (res[i] && res[i].values) || [];
+         const width = raw.reduce((w, r) => Math.max(w, r.length), 0);
+         const types = {};
+         const head = raw[0] || [];
+         const dc = (dateCols && dateCols[sh.getName()]) || {};
+         head.forEach((h, c) => { if (dc[String(h).trim()]) types[c] = dc[String(h).trim()]; });
+         const values = raw.map((r, y) => {
+            const out = new Array(width).fill("");
+            r.forEach((v, x) => {
+               if (y > 0 && types[x] && typeof v === "number") v = coreSerialToIso_(v, types[x]);
+               out[x] = v === null || v === undefined ? "" : v;
+            });
+            return out;
+         });
+         CORE_GRID[coreGridKey_(sh)] = { values: values.length ? values : [[]] };
+      });
+      return true;
+   } catch (e) {
+      console.warn("Batch read failed, reading tabs one by one: " + e);
+      return false;
+   }
+}
+
+// Spreadsheet day number (days since 1899-12-30, wall clock) -> "yyyy-MM-dd" or "yyyy-MM-ddTHH:mm".
+function coreSerialToIso_(serial, type) {
+   const d = new Date(Math.round((serial - 25569) * 86400000));
+   const s = d.toISOString();
+   return type === "datetime" ? s.slice(0, 16) : s.slice(0, 10);
+}
+
+// The Core tabs every request needs, in one read.
+function corePrefetch_() {
+   const T = CORE_CONFIG.tabs;
+   coreBatchRead_(coreSs_(), [T.perms, T.modules, T.areas, T.settings], {});
 }
 
 // Writes only fields whose value changed; returns "Field: old → new" notes.

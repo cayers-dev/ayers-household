@@ -186,9 +186,8 @@ function modClean_(def, t, raw, user, before) {
       } else if (v !== "" && f.type === "date") {
          v = modParseDate_(v, f);
       } else if (v !== "" && f.type === "datetime") {
-         const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?$/);
-         if (!m) throw coreError_("INVALID", (f.label || f.name) + " must be a date and time.");
-         v = new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0));
+         if (!/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?$/.test(String(v))) throw coreError_("INVALID", (f.label || f.name) + " must be a date and time.");
+         v = coreDate_(v);
       } else if (v !== "" && f.type === "list" && !same) {
          const match = modListValues_(def, f.list).find(x => x.active && x.value.toLowerCase() === String(v).toLowerCase());
          if (!match) throw coreError_("INVALID", "“" + v + "” isn't on the " + f.list + " list.");
@@ -206,10 +205,10 @@ function modClean_(def, t, raw, user, before) {
    return out;
 }
 
+// "2026-11-23" -> that day in the sheet's time zone (never a day off, whatever the script's zone).
 function modParseDate_(v, f) {
-   const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})$/);
-   if (!m) throw coreError_("INVALID", ((f && (f.label || f.name)) || "Date") + " must look like 2026-11-23.");
-   return new Date(+m[1], +m[2] - 1, +m[3]);
+   if (!/^(\d{4})-(\d{2})-(\d{2})$/.test(String(v))) throw coreError_("INVALID", ((f && (f.label || f.name)) || "Date") + " must look like 2026-11-23.");
+   return coreDate_(v);
 }
 
 function modCheckRequired_(t, merged) {
@@ -244,7 +243,7 @@ function modInsert_(def, tableKey, values, user) {
    rec[t.id] = id;
    if (t.kind === "list" && rec["Active"] === undefined) rec["Active"] = true;
    rec["Added By"] = user.id; rec["Added At"] = new Date(); rec["Deleted"] = false;
-   coreAppendRow_(modSheet_(def, t), rec);
+   coreAppendRow_(modSheet_(def, t), rec, true);   // whole row in one write
    modForget_(def, tableKey);
    coreLog_(user, def.key, "Add", t.label, modTitle_(def, t, rec), coreDescribe_(values));
    return id;
@@ -405,7 +404,34 @@ function modRouteAction_(req, user) {
    const def = modDefs_()[parts[0]];
    if (!def || !def.actions || !def.actions[parts[1]]) throw coreError_("BAD_REQUEST", "Unknown action.");
    const a = def.actions[parts[1]];
-   return a.write ? coreWrite_(() => a.fn(req, user)) : a.fn(req, user);
+   if (!a.write) return a.fn(req, user);
+   req.module = parts[0];
+   return modReply_(req, user, () => a.fn(req, user));
+}
+
+// Runs a save, then (when the app asks with reload: true) answers with the module's
+// fresh screen data in the same reply, so the app needs no second request.
+function modReply_(req, user, fn) {
+   const result = coreWrite_(fn) || {};
+   const def = modDefs_()[req.module];
+   if (req.reload && def && def.actions && def.actions.load) {
+      CORE_GRID = {}; MOD_ROWS = {};
+      corePrefetch_();
+      result.moduleData = def.actions.load.fn(req, user);
+   }
+   return result;
+}
+
+// Reads every tab of a module's spreadsheet in one request (see coreBatchRead_).
+function modPrefetch_(def) {
+   const dateCols = {};
+   Object.keys(def.tables).forEach(k => {
+      const t = def.tables[k], cols = {};
+      t.fields.forEach(f => { if (f.type === "date" || f.type === "datetime") cols[f.name] = f.type; });
+      ["Added At", "Updated At", "Deleted At"].forEach(n => cols[n] = "datetime");
+      dateCols[t.tab] = cols;
+   });
+   coreBatchRead_(modSs_(def.key), Object.keys(def.tables).map(k => def.tables[k].tab), dateCols);
 }
 
 // Due Soon items and Home tile summaries from every module that's set up.
@@ -430,6 +456,7 @@ function modHomeData_(user, days, visibleModules) {
 // Only adds what's missing; never touches existing rows.
 function modBuildTabs_(def) {
    const ss = modSs_(def.key);
+   ss.setSpreadsheetTimeZone(coreTz_());
    Object.keys(def.tables).forEach(k => {
       const t = def.tables[k];
       let sheet = ss.getSheetByName(t.tab);
@@ -450,12 +477,14 @@ function modBuildTabs_(def) {
       const col = name => headers.indexOf(name) + 1;
       t.fields.forEach(f => {
          const c = col(f.name);
-         if (f.type === "bool") sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).insertCheckboxes();
+         if (f.type === "bool") sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setDataValidation(modCheckbox_());
          if (f.type === "date") sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setNumberFormat("m/d/yyyy");
          if (f.type === "datetime") sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setNumberFormat("m/d/yyyy h:mm am/pm");
          if (f.type === "money") sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setNumberFormat("$#,##0.00");
       });
-      ["Deleted"].concat(t.kind === "list" ? ["Active"] : []).forEach(n => sheet.getRange(2, col(n), sheet.getMaxRows() - 1, 1).insertCheckboxes());
+      // Tick boxes as validation only: empty cells show an unticked box without making
+      // the tab look 1,000 rows long (which slows every read).
+      ["Deleted"].concat(t.kind === "list" ? ["Active"] : []).forEach(n => sheet.getRange(2, col(n), sheet.getMaxRows() - 1, 1).setDataValidation(modCheckbox_()));
       ["Added At", "Updated At", "Deleted At"].forEach(n => sheet.getRange(2, col(n), sheet.getMaxRows() - 1, 1).setNumberFormat("m/d/yyyy h:mm am/pm"));
    });
    // Tab order as defined; drop the blank starter tab.
@@ -463,6 +492,60 @@ function modBuildTabs_(def) {
    const blank = ss.getSheetByName("Sheet1");
    if (blank && blank.getLastRow() === 0 && ss.getSheets().length > 1) ss.deleteSheet(blank);
    CORE_GRID = {}; MOD_ROWS = {};
+}
+
+function modCheckbox_() { return SpreadsheetApp.newDataValidation().requireCheckbox().build(); }
+
+// One-time tidy for tabs made before tick boxes were validation-only: clears the
+// unticked boxes below the last real row (so reads only cover real rows) and puts
+// tick-box validation back on those columns. Never touches rows that have an ID.
+function modTidyTabs_(def) {
+   const ss = modSs_(def.key);
+   const out = [];
+   Object.keys(def.tables).forEach(k => {
+      const t = def.tables[k];
+      const sheet = ss.getSheetByName(t.tab);
+      if (!sheet) return;
+      const lastRow = sheet.getLastRow(), lastCol = sheet.getLastColumn();
+      const ids = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, 1).getValues() : [];
+      let used = 1;
+      ids.forEach((r, i) => { if (String(r[0]).trim() !== "") used = i + 2; });
+      if (lastRow > used) sheet.getRange(used + 1, 1, lastRow - used, lastCol).clearContent();
+      const headers = modHeaders_(t);
+      headers.forEach((h, i) => {
+         const f = t.fields.find(x => x.name === h);
+         if ((f && f.type === "bool") || h === "Deleted" || h === "Active") sheet.getRange(2, i + 1, sheet.getMaxRows() - 1, 1).setDataValidation(modCheckbox_());
+      });
+      out.push(t.tab + ": " + (used - 1) + " rows" + (lastRow > used ? " (cleared " + (lastRow - used) + " empty rows)" : ""));
+   });
+   CORE_GRID = {}; MOD_ROWS = {};
+   return out;
+}
+
+// Adds many rows at once (imports): one write for the whole batch. Returns the new IDs.
+function modBulkInsert_(def, tableKey, rows, user) {
+   if (!rows.length) return [];
+   const t = def.tables[tableKey];
+   const sheet = modSheet_(def, t);
+   const headers = modHeaders_(t);
+   let n = coreMaxNumber_(modRows_(def, tableKey, true).map(r => r[t.id]));
+   const now = new Date();
+   const ids = [];
+   const lines = rows.map(r => {
+      const rec = Object.assign({}, r);
+      rec[t.id] = t.prefix + (++n);
+      ids.push(rec[t.id]);
+      if (t.kind === "list" && rec["Active"] === undefined) rec["Active"] = true;
+      rec["Added By"] = rec["Added By"] || user.id; rec["Added At"] = now; rec["Deleted"] = false;
+      return headers.map(h => rec[h] === undefined ? "" : rec[h]);
+   });
+   const start = coreLastDataRow_(sheet) + 1;
+   const need = start + lines.length - 1;
+   if (need > sheet.getMaxRows()) sheet.insertRowsAfter(sheet.getMaxRows(), need - sheet.getMaxRows());
+   sheet.getRange(start, 1, lines.length, headers.length).setValues(lines);
+   delete CORE_GRID[coreGridKey_(sheet)];
+   modForget_(def, tableKey);
+   return ids;
 }
 
 // Adds seed rows to an empty table (setup only). rows: [{ field: value }]

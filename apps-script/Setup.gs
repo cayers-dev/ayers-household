@@ -92,7 +92,10 @@ function coreSetup() {
       header(users, ["User ID", "Email", "Name", "Admin", "Active", "Due Soon Days", "Added", "Notes"]);
       const now = new Date();
       users.getRange(2, 1, SETUP_USERS.length, 8).setValues(SETUP_USERS.map(r => r.map((v, i) => i === 6 ? now : v)));
-      users.getRange("D2:E").insertCheckboxes();
+      // Tick boxes only where there are people: a box in every row makes the tab
+      // look 1,000 rows long and slows every read.
+      users.getRange(2, 4, SETUP_USERS.length, 2).insertCheckboxes();
+      users.getRange("D2:E").setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
       users.getRange("G2:G").setNumberFormat("m/d/yyyy");
       users.setColumnWidth(2, 220); users.setColumnWidth(3, 150); users.setColumnWidth(8, 260);
    }
