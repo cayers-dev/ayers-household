@@ -24,13 +24,17 @@ Mobile web app for the Ayers household: vehicles, travel hockey, inventory, fina
 |---|---|
 | `Api.gs` | Web app entry point (`doPost`), sign-in and sessions, permissions (`coreCan_` for modules to use), users, modules, settings, Change Log. |
 | `Setup.gs` | `coreSetup()`: builds the Core tabs and the starting users, modules, areas and permissions. Safe to re-run; it only adds what's missing. |
+| `Modules.gs` | Shared engine for every module: tables, add / edit / soft delete / restore / permanent delete, dropdown lists (in use = turned off instead of deleted), permission checks, Due Soon. |
+| `Hockey.gs` | Travel Hockey: seasons, earnings, chore plan, weekly totals and consequences, expenses, schedule, venues. `hockeySetup()` builds its spreadsheet's tabs and fills the lists. |
+
+Front-end files: `app.js` (core), `modules.js` (shared module screens: forms, list managers, deleted items), `hockey.js` (Travel Hockey screens).
 
 ## Modules
 
 | Key | Module | Status |
 |---|---|---|
 | vehicles | Vehicles | Coming soon |
-| hockey | Travel Hockey | Coming soon |
+| hockey | Travel Hockey | Active (spreadsheet "Ayers Household - Travel Hockey") |
 | inventory | Inventory | Coming soon |
 | financial | Financial | Coming soon |
 | tasks | Tasks | Coming soon |

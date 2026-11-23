@@ -98,7 +98,18 @@ function coreRoute_(req, user) {
       case "saveSetting":      return coreWrite_(() => coreSaveSetting_(req, user));
       case "setChangeLog":     return coreWrite_(() => coreSetChangeLog_(req, user));
       case "changeLog":        return coreReadChangeLog_(req, user);
-      default: throw coreError_("BAD_REQUEST", "Unknown action.");
+      // Modules (Modules.gs): shared add / edit / delete for every module's tables
+      case "modAdd":           return coreWrite_(() => modAdd_(req, user));
+      case "modUpdate":        return coreWrite_(() => modUpdate_(req, user));
+      case "modDelete":        return coreWrite_(() => modDelete_(req, user));
+      case "modSetActive":     return coreWrite_(() => modSetActive_(req, user));
+      case "modRestore":       return coreWrite_(() => modRestore_(req, user));
+      case "modPurge":         return coreWrite_(() => modPurge_(req, user));
+      case "modDeleted":       return modDeleted_(req, user);
+      default:
+         // Module-specific actions are named "<module>.<action>" (e.g. hockey.load).
+         if (/^[a-z]+\./.test(String(req.action))) return modRouteAction_(req, user);
+         throw coreError_("BAD_REQUEST", "Unknown action.");
    }
 }
 
@@ -249,9 +260,13 @@ function coreBootstrap_(user) {
       modules: modules,
       roles: CORE_ROLES.slice(),
       roleCan: CORE_ROLE_CAN,
-      dueSoon: [],     // filled in by modules as they're added
+      dueSoon: [],     // filled in by modules (modDueSoon_)
       tasks: []        // filled in by the Tasks module
    };
+   // Due Soon items and Home tile summaries from each built module.
+   const extra = modHomeData_(user, out.user.dueSoonDays, modules);
+   out.dueSoon = extra.dueSoon;
+   out.modules.forEach(m => { if (extra.summaries[m.key]) m.summary = extra.summaries[m.key]; });
    if (user.admin) {
       out.admin = {
          users: coreGetUsers_().map(u => ({ id: u.id, email: u.email, name: u.name, admin: u.admin, active: u.active, dueSoonDays: u.dueSoonDays })),
@@ -543,7 +558,7 @@ function coreFlushLog_() {
       const need = start + rows.length - 1;
       if (need > log.getMaxRows()) log.insertRowsAfter(log.getMaxRows(), need - log.getMaxRows());
       log.getRange(start, 1, rows.length, 8).setValues(rows);
-      delete CORE_GRID[log.getSheetId()];
+      delete CORE_GRID[coreGridKey_(log)];
    } catch (e) {
       console.warn("Change Log write failed: " + e);   // never fail a save over the log
    }
@@ -581,8 +596,9 @@ function coreSheet_(name) {
 
 // One read per tab per request: { values } (row 1 = headers).
 let CORE_GRID = {};
+function coreGridKey_(sheet) { return sheet.getParent().getId() + ":" + sheet.getSheetId(); }
 function coreGrid_(sheet) {
-   const id = sheet.getSheetId();
+   const id = coreGridKey_(sheet);
    if (!CORE_GRID[id]) CORE_GRID[id] = { values: sheet.getDataRange().getValues() };
    return CORE_GRID[id];
 }
@@ -630,7 +646,7 @@ function coreAppendRow_(sheet, values) {
    });
    // Write each cell that has a value (leaves formula-driven columns alone).
    line.forEach((v, i) => { if (v !== null && v !== "") sheet.getRange(row, i + 1).setValue(v); });
-   delete CORE_GRID[sheet.getSheetId()];
+   delete CORE_GRID[coreGridKey_(sheet)];
    return row;
 }
 
@@ -638,7 +654,15 @@ function coreAppendRow_(sheet, values) {
 function coreWriteChanges_(sheet, row, before, values) {
    const hm = coreHeaderMap_(sheet);
    const tz = coreSs_().getSpreadsheetTimeZone();
-   const show = v => v instanceof Date ? Utilities.formatDate(v, tz, "yyyy-MM-dd") : (v === undefined || v === null ? "" : String(v));
+   // Dates compare by day, date-times by minute ("2026-11-23", "2026-11-23T18:30").
+   const show = v => {
+      if (v instanceof Date) {
+         const s = Utilities.formatDate(v, tz, "yyyy-MM-dd'T'HH:mm");
+         return s.slice(-6) === "T00:00" ? s.slice(0, 10) : s;
+      }
+      if (v === undefined || v === null) return "";
+      return String(v).replace(/T00:00$/, "");
+   };
    const changes = [];
    Object.keys(values).forEach(h => {
       const c = hm.map[h.toLowerCase()];
@@ -648,7 +672,7 @@ function coreWriteChanges_(sheet, row, before, values) {
       sheet.getRange(row, c).setValue(values[h] === "" ? "" : values[h]);
       changes.push(h + ": " + (oldV || "(blank)") + " → " + (newV || "(blank)"));
    });
-   if (changes.length) delete CORE_GRID[sheet.getSheetId()];
+   if (changes.length) delete CORE_GRID[coreGridKey_(sheet)];
    return changes;
 }
 

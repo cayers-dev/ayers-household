@@ -723,3 +723,71 @@ body.syncing::before { content: ""; position: fixed; top: 0; left: 0; right: 0; 
 .log-changes { font-size: 14px; margin: 2px 0; overflow-wrap: anywhere; }
 .home-link.dim { opacity: .65; }
 .perm-areas select { font-size: 14px; padding: 8px; }
+
+/* ---------- Module forms (modules.js) ---------- */
+.ro-value { padding: 10px 12px; border-radius: 10px; background: var(--surface-2); color: var(--muted); }
+.rec-meta { margin: -2px 0 10px; font-size: 13px; }
+.danger-zone { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.confirm-msg { margin: 0 0 12px; font-size: 16px; }
+.choice-btns { display: flex; flex-direction: column; gap: 8px; }
+.choice-btns .btn { justify-content: center; }
+.money-wrap .prefix { position: absolute; left: 12px; right: auto; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+.money-wrap input { padding-left: 26px !important; padding-right: 12px !important; }
+.pill.ok { background: rgba(43, 138, 62, .14); color: var(--ok); }
+.pill.bad { background: var(--danger-soft); color: var(--danger); }
+.neg { color: var(--danger); }
+.pos { color: var(--ok); }
+
+/* ---------- Travel Hockey ---------- */
+.season-pick { margin: 0 0 12px; }
+.hk-week { display: block; padding: 14px; margin-bottom: 12px; color: inherit; text-decoration: none; }
+.hk-week-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.hk-week-head b { font-size: 17px; }
+.hk-big { font-size: 34px; font-weight: 750; margin: 8px 0 6px; letter-spacing: -.01em; }
+.hk-big span { font-size: 16px; font-weight: 600; color: var(--muted); }
+.hk-big.pos { color: var(--ok); }
+.hk-kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); gap: 10px 14px; }
+.card.hk-kv { padding: 12px 14px; margin-bottom: 12px; }
+.hk-kv > div { display: flex; flex-direction: column; min-width: 0; }
+.hk-kv span { font-size: 13px; color: var(--muted); }
+.hk-kv b { font-size: 17px; }
+.hk-kv em { font-style: normal; font-size: 12px; color: var(--muted); }
+.hk-cons { margin-top: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hk-actions { margin: 0 0 6px; }
+.hk-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 12px; }
+.hk-toolbar select { padding: 9px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-size: 15px; }
+.hk-toolbar .check { padding: 0; }
+.hk-seg { margin: 0; padding: 0 !important; }
+.card.hk-total { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; margin-bottom: 12px; }
+.hk-total b { font-size: 20px; }
+.hk-amt { font-weight: 650; white-space: nowrap; text-align: right; display: flex; flex-direction: column; align-items: flex-end; }
+.hk-amt small { font-weight: 500; font-size: 12px; color: var(--muted); }
+.hk-group + .hk-group { border-top: 6px solid var(--surface-2); }
+.hk-grouphead { display: flex; justify-content: space-between; padding: 8px 12px; font-size: 13px; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.hk-month-nav { display: flex; align-items: center; justify-content: space-between; margin: 0 0 8px; }
+.hk-month-nav b { font-size: 18px; }
+.hk-month-nav .icon-btn { color: inherit; }
+.hk-days { padding: 2px 0; }
+.hk-day { display: flex; gap: 10px; padding: 7px 12px; border-top: 1px solid var(--border); align-items: flex-start; }
+.hk-day:first-child { border-top: 0; }
+.hk-day.today { background: var(--primary-soft); }
+.hk-day-l { width: 40px; flex: none; display: flex; flex-direction: column; align-items: center; line-height: 1.1; padding-top: 4px; }
+.hk-day-l b { font-size: 17px; }
+.hk-day-l span { font-size: 11px; color: var(--muted); text-transform: uppercase; }
+.hk-day-chips { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; min-height: 32px; align-items: center; }
+.chip.hk-chip { border: 0; cursor: pointer; padding: 5px 11px; font-family: inherit; }
+.chip.hk-chip span { opacity: .8; font-weight: 500; }
+.chip.hk-chip.done { background: var(--surface-2); color: var(--muted); text-decoration: line-through; }
+.chip.hk-chip.done svg { width: 13px; height: 13px; }
+.chip.hk-add { border: 1px dashed var(--border); background: transparent; color: var(--muted); padding: 4px 8px; cursor: pointer; }
+.chip.hk-add svg { width: 15px; height: 15px; }
+.hk-wk { padding: 12px 14px; margin-bottom: 10px; }
+.hk-wk.now { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.hk-wk.future { opacity: .7; }
+.hk-wk-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-bottom: 10px; }
+.hk-wk-head b { font-size: 16px; }
+.hk-pills { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.hk-wk-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+.hk-lvl { font-weight: 750; color: var(--muted); }
+.thumb.hk-date { display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; font-size: 18px; font-weight: 750; color: var(--primary); }
+.thumb.hk-date b { font-size: 11px; font-weight: 650; text-transform: uppercase; color: var(--muted); margin-bottom: 2px; }

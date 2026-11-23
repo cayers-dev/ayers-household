@@ -9,7 +9,7 @@
   const CFG = window.HH_CONFIG || {};
   const TOKEN_KEY = "hh_id_token";     // Google sign-in pass (only until the server gives a session)
   const SESSION_KEY = "hh_session";    // the app's own session: { token, exp }
-  const APP_VERSION = "1";
+  const APP_VERSION = "2";
 
   const state = {
     token: null, session: null, sessionExp: 0,
@@ -172,7 +172,7 @@
     if (json && json.session) setSession(json.session);
     if (!json.ok) {
       const e = new Error(json.message || "Something went wrong.");
-      e.code = json.code; e.email = json.email; throw e;
+      e.code = json.code; e.email = json.email; e.confirm = json.confirm; throw e;
     }
     return json;
   }
@@ -372,10 +372,12 @@
       case "perms":   view = route.args[0] ? viewPermsUser(route.args[0]) : viewPerms(); break;
       case "modules": view = viewModulesAdmin(); break;
       case "log":     view = viewLog(); break;
-      default:        view = viewHome();
+      default:
+        view = MODULE_VIEWS[route.name] && state.modules.some(m => m.key === route.name)
+          ? MODULE_VIEWS[route.name](route.args) : viewHome();
     }
     const tab = ["users", "perms", "modules", "log"].indexOf(route.name) !== -1 ? "admin" :
-                route.name === "module" ? "home" : route.name;
+                (route.name === "module" || MODULE_VIEWS[route.name]) ? "home" : route.name;
     const tabs = [["home", "Home", "home"]].concat(isAdmin() ? [["admin", "Admin", "admin"]] : []).concat([["account", "Account", "account"]]);
     $("#app").innerHTML =
       '<header class="topbar">' +
@@ -383,7 +385,7 @@
         '<h1>' + esc(view.title) + '</h1>' +
         '<button class="icon-btn" data-act="refresh" aria-label="Refresh">' + ICONS.refresh + '</button>' +
       '</header>' +
-      '<main class="view">' + view.html + '</main>' +
+      '<main class="view' + (view.wide ? " wide" : "") + '">' + view.html + '</main>' +
       '<nav class="tabbar">' +
         tabs.map(t => '<a href="#/' + t[0] + '" class="' + (tab === t[0] ? "active" : "") + '">' + ICONS[t[2]] + '<span>' + t[1] + '</span></a>').join("") +
       '</nav>';
@@ -405,7 +407,7 @@
     const due = state.dueSoon || [];
     const dueHtml = due.length
       ? '<div class="card list">' + due.map(d => '<a class="list-item" href="' + esc(d.href || "#/") + '"><div class="body"><div class="title">' + esc(d.title) + '</div>' +
-          '<div class="sub">' + esc([d.module, d.when].filter(Boolean).join(" · ")) + '</div></div></a>').join("") + '</div>'
+          '<div class="sub">' + esc([d.when, d.module].filter(Boolean).join(" · ")) + '</div></div></a>').join("") + '</div>'
       : '<div class="card"><div class="empty">Nothing due in the next ' + plural(days, "day") + '. Bills, service, insurance and other reminders show here as each module is added.</div></div>';
     const tasks = state.tasks || [];
     const tasksHtml = tasks.length
@@ -413,9 +415,9 @@
           (t.due ? '<div class="sub">Due ' + esc(t.due) + '</div>' : "") + '</div></div>').join("") + '</div>'
       : '<div class="card"><div class="empty">Your task list shows here once the Tasks module is set up.</div></div>';
     const tiles = state.modules.map(m => {
-      const soon = m.status !== "Active";
-      const info = m.status === "Off" ? "Off (admins only)" : soon ? "Coming soon" : (m.role === "Admin" ? "" : m.role);
-      return tile("#/module/" + encodeURIComponent(m.key), moduleIcon(m.key), m.name, info, soon ? "dim" : "");
+      const built = m.status === "Active" && MODULE_VIEWS[m.key];
+      const info = m.status === "Off" ? "Off (admins only)" : !built ? "Coming soon" : (m.summary || (m.role === "Admin" ? "" : m.role));
+      return tile(built ? "#/" + m.key : "#/module/" + encodeURIComponent(m.key), moduleIcon(m.key), m.name, info, built ? "" : "dim");
     }).join("");
     const html =
       section("Due soon", dueHtml, '<button class="link-btn" data-act="due-days">Next ' + plural(days, "day") + '</button>') +
@@ -725,17 +727,19 @@
       '<form class="sheet" novalidate>' +
         '<div class="sheet-head"><h2>' + esc(opts.title) + '</h2><button type="button" class="icon-btn" data-close aria-label="Close">' + ICONS.close + '</button></div>' +
         '<div class="sheet-body"><div class="form-error" hidden></div>' + opts.body + '</div>' +
-        '<div class="sheet-foot"><button type="button" class="btn" data-close>Cancel</button>' +
-        '<button type="submit" class="btn ' + (opts.danger ? "danger" : "primary") + '">' + esc(opts.submitLabel || "Save") + '</button></div>' +
+        '<div class="sheet-foot"><button type="button" class="btn" data-close>' + esc(opts.cancelLabel || "Cancel") + '</button>' +
+        (opts.noSubmit ? "" : '<button type="submit" class="btn ' + (opts.danger ? "danger" : "primary") + '">' + esc(opts.submitLabel || "Save") + '</button>') + '</div>' +
       '</form>';
     document.body.appendChild(back);
     document.body.style.overflow = "hidden";
     const form = $("form", back);
     form.setAttribute("role", "dialog"); form.setAttribute("aria-modal", "true"); form.setAttribute("aria-label", opts.title || "Form");
     modalOpen(back, form);
-    const close = () => { back.remove(); document.body.style.overflow = ""; };
+    const close = () => { back.remove(); if (!$(".sheet-backdrop")) document.body.style.overflow = ""; if (opts.onClose) opts.onClose(); };
+    form._close = close;
     $$("[data-close]", back).forEach(b => b.addEventListener("click", close));
     back.addEventListener("click", e => { if (e.target === back) close(); });
+    if (opts.onReady) opts.onReady(form, close);
     form.addEventListener("submit", async e => {
       e.preventDefault();
       const errBox = $(".form-error", form);
@@ -811,6 +815,16 @@
   // Start
   // ------------------------------------------------------------------
   window.HH = { gisLoaded: gisLoaded };
+
+  // Module screens (modules.js, hockey.js...) register here and use these core helpers.
+  const MODULE_VIEWS = {};
+  window.HH_CORE = {
+    state: state, api: api, write: write, refreshInBackground: refreshInBackground, handleError: handleError, authStop: authStop,
+    render: render, toast: toast, busy: busy, openSheet: openSheet, collect: collect, esc: esc, $: $, $$: $$,
+    plural: plural, ICONS: ICONS, svg: svg, tile: tile, section: section, moduleIcon: moduleIcon, isAdmin: isAdmin, ROLE_TEXT: ROLE_TEXT,
+    parseRoute: parseRoute,
+    registerModule: (key, viewFn) => { MODULE_VIEWS[key] = viewFn; }
+  };
 
   // Reload when a newer version is published.
   async function checkForUpdate() {
