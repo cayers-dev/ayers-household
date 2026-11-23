@@ -39,9 +39,14 @@ function modTableDef_(def, tableKey) {
    return t;
 }
 
-// Headers for a table, in sheet order.
+// Headers for a table, in the order a new tab gets them.
 function modHeaders_(t) {
    return [t.id].concat(t.fields.map(f => f.name)).concat(t.kind === "list" ? ["Active"] : []).concat(MOD_SYSTEM_COLS);
+}
+// Headers as they actually sit on the tab (columns added later go on the end).
+function modSheetHeaders_(sheet, t) {
+   const row = (coreGrid_(sheet).values[0] || []).map(h => String(h).trim());
+   return row.some(Boolean) ? row : modHeaders_(t);
 }
 
 // The module's spreadsheet (Modules tab ▸ Spreadsheet ID).
@@ -188,6 +193,10 @@ function modClean_(def, t, raw, user, before) {
       } else if (v !== "" && f.type === "datetime") {
          if (!/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?$/.test(String(v))) throw coreError_("INVALID", (f.label || f.name) + " must be a date and time.");
          v = coreDate_(v);
+      } else if (v !== "" && f.type === "choice") {
+         const match = (f.options || []).find(o => o.toLowerCase() === String(v).toLowerCase());
+         if (!match) throw coreError_("INVALID", (f.label || f.name) + " must be one of: " + (f.options || []).join(", ") + ".");
+         v = match;
       } else if (v !== "" && f.type === "list" && !same) {
          const match = modListValues_(def, f.list).find(x => x.active && x.value.toLowerCase() === String(v).toLowerCase());
          if (!match) throw coreError_("INVALID", "“" + v + "” isn't on the " + f.list + " list.");
@@ -462,19 +471,21 @@ function modBuildTabs_(def) {
       let sheet = ss.getSheetByName(t.tab);
       const headers = modHeaders_(t);
       if (!sheet) sheet = ss.insertSheet(t.tab);
+      let have = headers.slice();
       if (sheet.getLastRow() === 0) {
          sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight("bold").setBackground("#d9d9d9");
          sheet.setFrozenRows(1);
       } else {
-         // Add any columns that are new since the tab was made.
-         const have = sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getValues()[0].map(h => String(h).trim());
+         // Add any columns that are new since the tab was made (on the end).
+         have = sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getValues()[0].map(h => String(h).trim());
          headers.filter(h => have.indexOf(h) === -1).forEach(h => {
             const c = have.filter(Boolean).length + 1;
             sheet.getRange(1, c).setValue(h).setFontWeight("bold").setBackground("#d9d9d9");
             have[c - 1] = h;
          });
+         delete CORE_GRID[coreGridKey_(sheet)];
       }
-      const col = name => headers.indexOf(name) + 1;
+      const col = name => have.indexOf(name) + 1;
       t.fields.forEach(f => {
          const c = col(f.name);
          if (f.type === "bool") sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setDataValidation(modCheckbox_());
@@ -511,7 +522,7 @@ function modTidyTabs_(def) {
       let used = 1;
       ids.forEach((r, i) => { if (String(r[0]).trim() !== "") used = i + 2; });
       if (lastRow > used) sheet.getRange(used + 1, 1, lastRow - used, lastCol).clearContent();
-      const headers = modHeaders_(t);
+      const headers = sheet.getRange(1, 1, 1, Math.max(1, lastCol)).getValues()[0].map(h => String(h).trim());
       headers.forEach((h, i) => {
          const f = t.fields.find(x => x.name === h);
          if ((f && f.type === "bool") || h === "Deleted" || h === "Active") sheet.getRange(2, i + 1, sheet.getMaxRows() - 1, 1).setDataValidation(modCheckbox_());
@@ -527,7 +538,7 @@ function modBulkInsert_(def, tableKey, rows, user) {
    if (!rows.length) return [];
    const t = def.tables[tableKey];
    const sheet = modSheet_(def, t);
-   const headers = modHeaders_(t);
+   const headers = modSheetHeaders_(sheet, t);
    let n = coreMaxNumber_(modRows_(def, tableKey, true).map(r => r[t.id]));
    const now = new Date();
    const ids = [];
@@ -553,7 +564,7 @@ function modSeed_(def, tableKey, rows, user) {
    if (modRows_(def, tableKey, true).length) return 0;
    const t = def.tables[tableKey];
    const sheet = modSheet_(def, t);
-   const headers = modHeaders_(t);
+   const headers = modSheetHeaders_(sheet, t);
    let n = coreMaxNumber_([]);
    const now = new Date();
    const lines = rows.map(r => {

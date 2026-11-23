@@ -31,6 +31,8 @@ function hockeyDef_() {
                { name: "Start Date", type: "date", required: true },
                { name: "End Date", type: "date", required: true },
                { name: "Share %", type: "percent", required: true, default: 20, hint: "Part of billable expenses the player earns back" },
+               { name: "Tracking", type: "choice", options: ["Weekly", "Monthly"], required: true, default: "Weekly",
+                 hint: "Weekly: a target each week, with consequences. Monthly: a target each month, no consequences." },
                { name: "Past Due Extra", type: "money", required: true, default: 15, hint: "Added to the week's target while behind" },
                { name: "Notes", type: "longtext" }
             ] },
@@ -292,6 +294,68 @@ function hockeyWeeks_(season, expenses, earnings, flags, today) {
 }
 const hockeyR_ = n => Math.round(n * 100) / 100;
 
+// "Weekly" (default) or "Monthly".
+function hockeyTracking_(season) { return season && String(season["Tracking"] || "").trim() === "Monthly" ? "Monthly" : "Weekly"; }
+
+// Months of a season tracked monthly, as in the 2025-26 sheet:
+//   required to date = Share % of billable expenses paid so far ÷ months left (this month included)
+//   compared with everything earned up to the end of the month. No consequences.
+function hockeyMonths_(season, expenses, earnings, today) {
+   if (!season || !season["Start Date"] || !season["End Date"]) return [];
+   const sid = season["Season ID"];
+   const pct = (Number(season["Share %"]) || 0) / 100;
+   const exp = expenses.filter(e => e["Season ID"] === sid && !e["Non-Billable"] && e["Date"])
+      .map(e => ({ d: String(e["Date"]).slice(0, 10), a: Number(e["Amount"]) || 0 }));
+   const earn = earnings.filter(e => e["Season ID"] === sid && e["Date"])
+      .map(e => ({ d: String(e["Date"]).slice(0, 10), a: Number(e["Amount"]) || 0 }));
+   const sum = (list, from, to) => list.filter(x => (!from || x.d >= from) && x.d <= to).reduce((t, x) => t + x.a, 0);
+   let y = +String(season["Start Date"]).slice(0, 4), m = +String(season["Start Date"]).slice(5, 7);
+   const endKey = String(season["End Date"]).slice(0, 7);
+   const keys = [];
+   while (keys.length < 60) {
+      const k = y + "-" + String(m).padStart(2, "0");
+      keys.push(k);
+      if (k >= endKey) break;
+      m++; if (m > 12) { m = 1; y++; }
+   }
+   return keys.map((k, i) => {
+      const ms = k + "-01";
+      const last = new Date(Date.UTC(+k.slice(0, 4), +k.slice(5, 7), 0)).getUTCDate();
+      const me = k + "-" + String(last).padStart(2, "0");
+      const totalExp = sum(exp, "", me);
+      const required = totalExp * pct / (keys.length - i);
+      const earned = sum(earn, "", me), before = earn.filter(x => x.d < ms).reduce((t, x) => t + x.a, 0);
+      const state = me < today ? "done" : (ms <= today ? "current" : "future");
+      const diff = earned - required;
+      return {
+         n: i + 1, start: ms, end: me, state: state,
+         monthExp: hockeyR_(sum(exp, ms, me)), totalExp: hockeyR_(totalExp), required: hockeyR_(required),
+         monthEarned: hockeyR_(earned - before), earned: hockeyR_(earned), diff: hockeyR_(diff),
+         toEarn: hockeyR_(Math.max(0, required - before)),
+         met: state === "future" ? "" : (diff >= -0.005 ? "Y" : "N")
+      };
+   });
+}
+
+// Season totals for a monthly season (earnings logged after the last month still count here).
+function hockeyMonthStatus_(season, months, expenses, earnings) {
+   const sid = season ? season["Season ID"] : "";
+   const pct = season ? (Number(season["Share %"]) || 0) / 100 : 0;
+   const billable = expenses.filter(e => e["Season ID"] === sid && !e["Non-Billable"]).reduce((t, e) => t + (Number(e["Amount"]) || 0), 0);
+   const mine = earnings.filter(e => e["Season ID"] === sid);
+   const earned = mine.reduce((t, e) => t + (Number(e["Amount"]) || 0), 0);
+   const endDay = season ? String(season["End Date"]).slice(0, 10) : "";
+   const after = mine.filter(e => String(e["Date"]).slice(0, 10) > endDay).reduce((t, e) => t + (Number(e["Amount"]) || 0), 0);
+   const done = months.filter(x => x.state === "done");
+   return {
+      monthly: true, level: 0, consequences: [],
+      current: months.find(x => x.state === "current") || null,
+      behind: done.length ? done[done.length - 1].diff < -0.005 : false,
+      totals: { billable: hockeyR_(billable), required: hockeyR_(billable * pct), earned: hockeyR_(earned), afterEnd: hockeyR_(after),
+                diff: hockeyR_(earned - billable * pct) }
+   };
+}
+
 // Summary of a season's weeks: this week, consequence level and the consequences that apply.
 function hockeyStatus_(weeks, consequences) {
    const current = weeks.find(w => w.state === "current") || null;
@@ -322,9 +386,11 @@ function hockeyLoad_(req, user) {
    const inSeason = r => r["Season ID"] === sid;
    const today = hockeyToday_();
    const expensesAll = modRows_(def, "expenses"), earningsAll = modRows_(def, "earnings");
-   const weeks = hockeyWeeks_(season, expensesAll, earningsAll, modRows_(def, "weekflags"), today);
+   const tracking = hockeyTracking_(season);
+   const weeks = tracking === "Weekly" ? hockeyWeeks_(season, expensesAll, earningsAll, modRows_(def, "weekflags"), today) : [];
+   const months = tracking === "Monthly" ? hockeyMonths_(season, expensesAll, earningsAll, today) : null;
    const out = {
-      today: today, seasons: seasons, seasonId: sid,
+      today: today, seasons: seasons, seasonId: sid, tracking: tracking,
       schema: modSchema_(def), caps: modCaps_(def, user),
       chores: modRows_(def, "chores"), venues: modRows_(def, "venues"),
       lists: modRows_(def, "lists"),
@@ -337,11 +403,13 @@ function hockeyLoad_(req, user) {
    }
    if (can("totals")) {
       out.weeks = weeks;
-      out.status = hockeyStatus_(weeks, modRows_(def, "consequences"));
+      out.status = months ? hockeyMonthStatus_(season, months, expensesAll, earningsAll) : hockeyStatus_(weeks, modRows_(def, "consequences"));
       out.consequences = modRows_(def, "consequences");
+      if (months) out.months = months;
    } else if (can("earnings")) {
-      // Planning needs the month's required amount even without the weekly totals screen.
+      // Planning needs the month's required amount even without the totals screen.
       out.weeks = weeks.map(w => ({ start: w.start, end: w.end, weeklyRequired: w.weeklyRequired, state: w.state }));
+      if (months) out.months = months.map(x => ({ start: x.start, end: x.end, toEarn: x.toEarn, state: x.state }));
    }
    if (can("expenses")) out.expenses = expensesAll.filter(inSeason);
    if (can("schedule")) out.events = modRows_(def, "events").filter(inSeason);
@@ -367,6 +435,7 @@ function hockeySetExclude_(req, user) {
    if (!coreCan_(user, "hockey", "totals", "edit")) throw coreError_("FORBIDDEN", "Only editors and admins can exclude weeks.");
    const season = modFind_(def, "seasons", req.seasonId);
    const ws = hockeyIso_(modParseDate_(req.weekStart));
+   if (hockeyTracking_(season) !== "Weekly") throw coreError_("INVALID", "Weeks can only be excluded in a season tracked weekly.");
    if (!hockeyWeeks_(season, [], [], [], hockeyToday_()).some(w => w.start === ws)) throw coreError_("INVALID", "That isn't a week of this season.");
    const existing = modRows_(def, "weekflags").find(f => f["Season ID"] === season["Season ID"] && String(f["Week Start"]).slice(0, 10) === ws);
    const values = { "Exclude": !!req.exclude, "Note": String(req.note || "").trim() };
@@ -384,7 +453,15 @@ function hockeyHome_(user, days) {
    if (!season) return out;
    const today = hockeyToday_();
    const tz = coreSs_().getSpreadsheetTimeZone();
-   if (coreCan_(user, "hockey", "totals", "view")) {
+   if (coreCan_(user, "hockey", "totals", "view") && hockeyTracking_(season) === "Monthly") {
+      const mo = hockeyMonths_(season, modRows_(def, "expenses"), modRows_(def, "earnings"), today).find(x => x.state === "current");
+      if (mo) {
+         const left = Math.max(0, mo.required - mo.earned);
+         out.summary = left > 0 ? "This month: $" + left.toFixed(2) + " to go" : "This month: on track";
+         if (left > 0) out.dueSoon.push({ title: "Earn $" + left.toFixed(2) + " in chores", when: "by " + hockeyNiceDate_(mo.end),
+            sortKey: mo.end + "T23:59", href: "#/hockey/weeks" });
+      }
+   } else if (coreCan_(user, "hockey", "totals", "view")) {
       const weeks = hockeyWeeks_(season, modRows_(def, "expenses"), modRows_(def, "earnings"), modRows_(def, "weekflags"), today);
       const w = weeks.find(x => x.state === "current");
       if (w) {
@@ -442,7 +519,7 @@ function hockeySetup() {
    const owner = coreGetUsers_(true).find(u => u.admin) || { id: "USR-1" };
 
    modSeed_(def, "seasons", [{ "Season": "2026-27", "Start Date": coreDate_("2026-04-27"), "End Date": coreDate_("2027-02-28"),
-      "Share %": 20, "Past Due Extra": 15, "Notes": "From the original 2026-27 Travel Hockey sheet" }], owner);
+      "Share %": 20, "Tracking": "Weekly", "Past Due Extra": 15, "Notes": "From the original 2026-27 Travel Hockey sheet" }], owner);
    modSeed_(def, "chores", HOCKEY_SEED.chores.map(c => ({ "Chore": c[0], "Amount": c[1] })), owner);
    modSeed_(def, "venues", HOCKEY_SEED.venues.map(v => ({ "Name": v })), owner);
    modSeed_(def, "consequences", HOCKEY_SEED.consequences.map(c => ({ "Level": c[0], "Consequence": c[1] })), owner);
@@ -628,6 +705,131 @@ function hockeyImport2026() {
       const total = earnings.reduce((s2, e) => s2 + e["Amount"], 0);
       const summary = ne + " earnings ($" + total.toFixed(2) + "), " + nx + " expenses, " + nf + " excluded week(s), " + np + " planned chore(s)";
       coreLog_(owner, "hockey", "Import", "Travel Hockey", "2026-27", "From the original sheet: " + summary, true);
+      coreFlushLog_();
+      SpreadsheetApp.flush();
+      console.log("Imported " + summary);
+      return summary;
+   } finally {
+      lock.releaseLock();
+   }
+}
+
+
+// ------------------------------------------------------------
+// Import from the "Travel Hockey 2025-26 Expense Tracking" sheet (run hockeyImport2025() once).
+// Adds the 2025-26 season (25%, tracked monthly, June 2025 - February 2026), every chore
+// logged (at the price paid then) and every expense (Date = date paid; the activity date
+// goes in Notes). Chores no longer on the list are added turned off; categories not on the
+// list are added. Entries are added as Chris (USR-1). Refuses to run twice.
+// ------------------------------------------------------------
+const HOCKEY_IMPORT_2025 = "1TvvwL6LZiD6rZqqhHfFJW6sOUb_h3NoHM4BCchWq13w";
+const HOCKEY_2025_CHORES = {              // old name -> chore on today's list
+   "dishes - diner (family)": "Dishes (Family Meal)",
+   "dot bath": "Bath (Dot)",
+   "clean dots kennel": "Kennel (Dot) Clean",
+   "window wash living room": "Window Wash (Living Room) Inside & Outside",
+   "clean door & jambs (per door both sides)": "Door & Jambs (1 Door Both Sides) Clean"
+};
+const HOCKEY_2025_CATEGORIES = { "hotel": "Tournament - Hotel", "tournament": "Tournament - Registration" };
+
+function hockeyImport2025() {
+   CORE_GRID = {}; MOD_ROWS = {};
+   let def = hockeyDef_();
+   if (modRows_(def, "settings", true).some(r => r["Setting"] === "Imported 2025-26")) {
+      throw new Error("Already imported (Settings tab ▸ Imported 2025-26). Delete that row first only if you really mean to import again.");
+   }
+   if (modRows_(def, "seasons", true).some(r => r["Season"] === "2025-26")) throw new Error("A 2025-26 season already exists.");
+   modBuildTabs_(def);                     // adds the Seasons ▸ Tracking column
+   def = hockeyDef_();
+   const owner = coreGetUsers_(true).find(u => u.id === "USR-1") || coreGetUsers_(true).find(u => u.admin);
+   const src = SpreadsheetApp.openById(HOCKEY_IMPORT_2025);
+   const stz = src.getSpreadsheetTimeZone();
+   const isoOf = v => v instanceof Date ? Utilities.formatDate(v, stz, "yyyy-MM-dd") : "";
+   const norm = x => String(x || "").replace(/\s+/g, " ").trim().toLowerCase();
+   const nice = iso => +iso.slice(5, 7) + "/" + +iso.slice(8, 10) + "/" + iso.slice(0, 4);
+   const problems = [];
+
+   // ---- Chores: today's list, the mapping above, or added (turned off) at the old price.
+   const chores = modRows_(def, "chores", true);
+   const choreByName = {};
+   chores.forEach(c => choreByName[norm(c["Chore"])] = c);
+   const oldPrice = {};
+   src.getSheetByName("ContAmt").getDataRange().getValues().slice(1).forEach(r => { if (String(r[0]).trim()) oldPrice[norm(r[0])] = Number(r[2]) || 0; });
+   const ev = src.getSheetByName("JasperContributions").getDataRange().getValues();
+   const rawEarn = [];
+   ev.slice(1).forEach((r, i) => {
+      const day = isoOf(r[0]), name = String(r[1] || "").trim();
+      if (!day && !name) return;
+      if (!day || !name || r[2] === "" || r[2] === null) { problems.push("JasperContributions row " + (i + 2) + " is missing a date, activity or amount"); return; }
+      rawEarn.push({ day: day, name: name, amount: Number(r[2]) || 0, notes: String(r[3] || "").trim() });
+   });
+   const newChores = [];
+   const choreFor = name => {
+      const mapped = HOCKEY_2025_CHORES[norm(name)];
+      const hit = choreByName[norm(mapped || name)];
+      if (hit) return hit;
+      let nc = newChores.find(c => norm(c["Chore"]) === norm(name));
+      if (!nc) {
+         const first = rawEarn.find(e => norm(e.name) === norm(name));
+         nc = { "Chore": name, "Amount": oldPrice[norm(name)] !== undefined ? oldPrice[norm(name)] : first.amount, "Active": false,
+                "Notes": "From the 2025-26 sheet (turned off)" };
+         newChores.push(nc);
+      }
+      return nc;
+   };
+   rawEarn.forEach(e => choreFor(e.name));
+
+   // ---- Expenses: categories mapped, or added to the list.
+   const cats = modListValues_(def, "Expense Category");
+   const newCats = [];
+   const catFor = c => {
+      const want = HOCKEY_2025_CATEGORIES[norm(c)] || String(c).trim();
+      const hit = cats.find(x => norm(x.value) === norm(want));
+      if (hit) return hit.value;
+      if (!newCats.some(x => norm(x) === norm(want))) newCats.push(want);
+      return newCats.find(x => norm(x) === norm(want));
+   };
+   const xv = src.getSheetByName("Expenses").getDataRange().getValues();
+   const xh = xv[0].map(h => String(h).trim().toLowerCase());
+   const col = n => xh.indexOf(n.toLowerCase());
+   const rawExp = [];
+   xv.slice(1).forEach((r, i) => {
+      const paid = isoOf(r[col("Date Paid")]), amount = r[col("Amount")];
+      if (!paid && (amount === "" || amount === null)) return;
+      if (!paid || amount === "" || amount === null || !String(r[col("Category")]).trim()) { problems.push("Expenses row " + (i + 2) + " is missing a date paid, category or amount"); return; }
+      const act = isoOf(r[col("Activity Date")]);
+      rawExp.push({ paid: paid, cat: catFor(r[col("Category")]), item: String(r[col("Activity")] || "").trim(), amount: Number(amount) || 0,
+         notes: [act ? "Activity date " + nice(act) : "", String(r[col("Notes")] || "").trim()].filter(Boolean).join(". ") });
+   });
+   if (problems.length) throw new Error("Nothing imported. Fix these first:\n" + problems.join("\n"));
+
+   const lock = LockService.getScriptLock();
+   lock.waitLock(20000);
+   try {
+      // This season (2026-27) says Weekly; the new one is Monthly.
+      modRows_(def, "seasons").filter(r => !String(r["Tracking"] || "").trim()).forEach(r => modChange_(def, "seasons", r, { "Tracking": "Weekly" }, owner));
+      const sid = modBulkInsert_(def, "seasons", [{ "Season": "2025-26", "Start Date": coreDate_("2025-06-01"), "End Date": coreDate_("2026-02-28"),
+         "Share %": 25, "Tracking": "Monthly", "Past Due Extra": 0,
+         "Notes": "From the 2025-26 Travel Hockey sheet: a target each month, no consequences" }], owner)[0];
+      const choreIds = modBulkInsert_(def, "chores", newChores, owner);
+      newChores.forEach((c, i) => c["Chore ID"] = choreIds[i]);
+      if (newCats.length) modBulkInsert_(def, "lists", newCats.map(v => ({ "List": "Expense Category", "Value": v, "Sort": 0 })), owner);
+      const earnings = rawEarn.map(e => {
+         const c = choreFor(e.name);
+         return { "Date": coreDate_(e.day), "Chore ID": c["Chore ID"], "Chore Name": c["Chore"], "Amount": e.amount, "Season ID": sid, "Notes": e.notes };
+      });
+      const sport = hockeySetting_(def, "Default Sport", "Hockey");
+      const expenses = rawExp.map(x => ({ "Date": coreDate_(x.paid), "Category": x.cat, "Item": x.item, "Location ID": "", "Amount": x.amount,
+         "Non-Billable": false, "Sport": sport, "Season ID": sid, "Notes": x.notes }));
+      const ne = modBulkInsert_(def, "earnings", earnings, owner).length;
+      const nx = modBulkInsert_(def, "expenses", expenses, owner).length;
+      modBulkInsert_(def, "settings", [{ "Setting": "Imported 2025-26", "Value": Utilities.formatDate(new Date(), coreTz_(), "yyyy-MM-dd HH:mm"),
+         "Notes": "From the 2025-26 Travel Hockey sheet (" + HOCKEY_IMPORT_2025 + ")" }], owner);
+      const et = earnings.reduce((t, e) => t + e["Amount"], 0), xt = expenses.reduce((t, e) => t + e["Amount"], 0);
+      const summary = "Season 2025-26 (" + sid + "): " + ne + " earnings ($" + et.toFixed(2) + "), " + nx + " expenses ($" + xt.toFixed(2) + ")" +
+         (newChores.length ? ", chores added (turned off): " + newChores.map(c => c["Chore"]).join(", ") : "") +
+         (newCats.length ? ", categories added: " + newCats.join(", ") : "");
+      coreLog_(owner, "hockey", "Import", "Travel Hockey", "2025-26", "From the 2025-26 sheet: " + summary, true);
       coreFlushLog_();
       SpreadsheetApp.flush();
       console.log("Imported " + summary);

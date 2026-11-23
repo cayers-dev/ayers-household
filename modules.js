@@ -94,6 +94,10 @@
           (canAddChoice(ctx, f) ? '<option value="' + NEW + '">＋ Add new…</option>' : "") + '</select>';
         break;
       }
+      case "choice":
+        input = '<select id="' + id + '" name="' + esc(f.name) + '"' + req + '>' + (f.required ? "" : '<option value=""></option>') +
+          (f.options || []).map(o => '<option value="' + esc(o) + '"' + (String(o) === String(v || f.default || "") ? " selected" : "") + '>' + esc(o) + '</option>').join("") + '</select>';
+        break;
       case "money":
         input = '<div class="suffix-wrap money-wrap"><span class="prefix">$</span><input type="number" step="0.01" inputmode="decimal" id="' + id + '" name="' + esc(f.name) + '" value="' + esc(v) + '"' + req + '></div>';
         break;

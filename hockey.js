@@ -136,6 +136,8 @@
   const metPill = w => w.state === "future" ? "" : w.met === "Exc" ? pill("Excluded") : w.state === "current" ? pill(w.diff >= -0.005 ? "On track so far" : "In progress", w.diff >= -0.005 ? "ok" : "") :
     w.met === "Y" ? pill("Met", "ok") : pill("Not met", "bad");
   const weekRange = w => fmtDay(w.start, { weekday: undefined }) + " – " + fmtDay(w.end, { weekday: undefined });
+  const monthly = () => !!(D().status && D().status.monthly);
+  const monthName = (mo, opts) => parseIso(mo.start).toLocaleDateString(undefined, opts || { month: "long", year: "numeric" });
   const venueLine = id => { const v = venueById(id); return v ? v["Name"] : ""; };
 
   function seasonPicker() {
@@ -146,9 +148,33 @@
       '</select></div>';
   }
 
+  function thisMonthCard() {
+    const st = D().status, t = st.totals, mo = st.current;
+    const sname = (season() || {})["Season"] || "";
+    const pct = esc((season() || {})["Share %"]);
+    if (!mo) {
+      const months = D().months || [];
+      const started = months.some(x => x.state !== "future");
+      return '<a class="card hk-week" href="#/hockey/weeks"><div class="hk-week-head"><b>' + esc(sname) + '</b>' + pill(started ? "Season over" : "Not started") + '</div>' +
+        (started ? '<div class="hk-kv"><div><span>Required (' + pct + '% of ' + money(t.billable) + ')</span><b>' + money(t.required) + '</b></div>' +
+          '<div><span>Earned</span><b>' + money(t.earned) + '</b></div>' +
+          '<div><span>' + (t.diff < -0.005 ? "Short by" : "Over by") + '</span><b class="' + (t.diff < -0.005 ? "neg" : "pos") + '">' + money(Math.abs(t.diff)) + '</b></div></div>' +
+          (t.afterEnd > 0 ? '<p class="hint" style="margin:8px 0 0">Earned includes ' + money(t.afterEnd) + ' logged after the season ended.</p>' : "") : "") + '</a>';
+    }
+    const left = Math.max(0, mo.required - mo.earned);
+    const player = (D().users || []).find(u => u.id === D().settings.playerId);
+    return '<a class="card hk-week" href="#/hockey/weeks">' +
+      '<div class="hk-week-head"><b>' + (player ? esc(player.name.split(" ")[0]) + "’s month" : "This month") + '</b><span class="meta">Month ' + mo.n + ' of ' + (D().months || []).length + ' · ' + esc(monthName(mo)) + '</span></div>' +
+      '<div class="hk-big ' + (left > 0 ? "" : "pos") + '">' + (left > 0 ? money(left) + '<span> to go</span>' : 'On track<span> this month</span>') + '</div>' +
+      '<div class="hk-kv"><div><span>Required to date</span><b>' + money(mo.required) + '</b></div>' +
+        '<div><span>Earned this month</span><b>' + money(mo.monthEarned) + '</b></div>' +
+        '<div><span>Earned to date</span><b>' + money(mo.earned) + '</b></div></div></a>';
+  }
+
   function thisWeekCard() {
     const st = D().status;
     if (!st) return "";
+    if (st.monthly) return thisMonthCard();
     const w = st.current;
     const sname = (season() || {})["Season"] || "";
     if (!w) {
@@ -206,7 +232,8 @@
     const tiles = [];
     if (d.earnings) tiles.push(tile("#/hockey/earnings", IC.chore, "Earnings", plural(d.earnings.length, "entry", "entries") + " · " + money(earnTotal)));
     if (d.plan) tiles.push(tile("#/hockey/plan/" + monthKey, IC.calendar, "Chore plan", planned.length ? plural(planned.filter(p => p["Status"] !== "Done").length, "planned chore") + " this month" : "Plan the month"));
-    if (d.status) tiles.push(tile("#/hockey/weeks", IC.chart, "Weekly totals", "Consequence level " + d.status.level));
+    if (d.status && d.status.monthly) tiles.push(tile("#/hockey/weeks", IC.chart, "Monthly totals", d.status.totals.diff < -0.005 ? money(-d.status.totals.diff) + " short" : "On track"));
+    else if (d.status) tiles.push(tile("#/hockey/weeks", IC.chart, "Weekly totals", "Consequence level " + d.status.level));
     if (d.expenses) tiles.push(tile("#/hockey/expenses", IC.receipt, "Expenses", money(billable) + " billable"));
     if (d.events) tiles.push(tile("#/hockey/schedule", ICONS.clock, "Schedule", plural(upcoming.length, "upcoming event")));
     if (d.events) tiles.push(tile("#/hockey/venues", IC.pin, "Venues", plural((d.venues || []).filter(v => v["Active"] !== false).length, "venue")));
@@ -253,7 +280,8 @@
     const price = p => { const c = choreById(p["Chore ID"]); return c ? Number(c["Amount"]) : 0; };
     const plannedTotal = items.reduce((s, p) => s + price(p), 0);
     const doneTotal = items.filter(p => p["Status"] === "Done").reduce((s, p) => s + price(p), 0);
-    const required = (d.weeks || []).filter(w => w.start.slice(0, 7) === month).reduce((s, w) => s + w.weeklyRequired, 0);
+    const required = d.months ? ((d.months.find(x => x.start.slice(0, 7) === month) || {}).toEarn || 0)
+      : (d.weeks || []).filter(w => w.start.slice(0, 7) === month).reduce((s, w) => s + w.weeklyRequired, 0);
     const canPlan = M.tableCan(ctx, "plan", "add");
     let list = "";
     for (let i = 1; i <= days; i++) {
@@ -294,9 +322,41 @@
     });
   }
 
+  function viewMonths() {
+    const d = D(), t = d.status.totals;
+    const pct = esc((season() || {})["Share %"]);
+    const card = mo => '<div class="card hk-wk ' + mo.state + (mo.state === "current" ? " now" : "") + '" id="mo-' + mo.start + '">' +
+      '<div class="hk-wk-head"><b>' + esc(monthName(mo)) + '</b><span class="meta">Month ' + mo.n + ' of ' + d.months.length + '</span><span class="hk-pills">' + metPill(mo) + '</span></div>' +
+      (mo.state === "future" ? '<div class="hk-kv"><div><span>Expenses so far</span><b>' + money(mo.totalExp) + '</b></div></div>' :
+      '<div class="hk-kv">' +
+        '<div><span>Required to date</span><b>' + money(mo.required) + '</b></div>' +
+        '<div><span>Earned to date</span><b>' + money(mo.earned) + '</b></div>' +
+        '<div><span>Difference</span><b class="' + (mo.diff < -0.005 ? "neg" : "pos") + '">' + money(mo.diff) + '</b></div>' +
+        '<div><span>Expenses this month</span><b>' + money(mo.monthExp) + '</b></div>' +
+        '<div><span>Expenses to date</span><b>' + money(mo.totalExp) + '</b></div>' +
+        '<div><span>Earned this month</span><b>' + money(mo.monthEarned) + '</b></div>' +
+      '</div>') + '</div>';
+    const cur = d.months.filter(x => x.state === "current");
+    const done = d.months.filter(x => x.state === "done").reverse();
+    const future = d.months.filter(x => x.state === "future");
+    const summary = '<div class="card hk-kv hk-plan-sum">' +
+      '<div><span>Billable expenses</span><b>' + money(t.billable) + '</b></div>' +
+      '<div><span>Required (' + pct + '%)</span><b>' + money(t.required) + '</b></div>' +
+      '<div><span>Earned</span><b>' + money(t.earned) + '</b></div>' +
+      '<div><span>' + (t.diff < -0.005 ? "Short by" : "Over by") + '</span><b class="' + (t.diff < -0.005 ? "neg" : "pos") + '">' + money(Math.abs(t.diff)) + '</b></div></div>' +
+      (t.afterEnd > 0 ? '<p class="hint" style="margin:8px 4px 0">Earned includes ' + money(t.afterEnd) + ' logged after the season ended (not in any month below).</p>' : "");
+    const html = seasonPicker() + summary +
+      (cur.length ? section("This month", cur.map(card).join("")) : "") +
+      (done.length ? section("Past months", done.map(card).join("")) : "") +
+      (future.length ? section("Coming months", future.map(card).join("")) : "") +
+      '<p class="hint">This season is tracked monthly. Each month’s required amount is ' + pct + '% of billable expenses paid so far, divided by the months left in the season (this month included), compared with everything earned up to the end of the month. No consequences.</p>';
+    return { title: "Monthly totals", back: true, html: html, keepScroll: true };
+  }
+
   function viewWeeks() {
     const d = D();
     if (!d.status) return noAccess("Weekly totals");
+    if (d.status.monthly) return viewMonths();
     const canEx = can("totals", "edit");
     const card = w => '<div class="card hk-wk ' + w.state + (w.state === "current" ? " now" : "") + '" id="wk-' + w.start + '">' +
       '<div class="hk-wk-head"><b>Week ' + w.n + '</b><span class="meta">' + esc(weekRange(w)) + '</span><span class="hk-pills">' + metPill(w) +
