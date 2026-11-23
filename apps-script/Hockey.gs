@@ -33,6 +33,8 @@ function hockeyDef_() {
                { name: "Share %", type: "percent", required: true, default: 20, hint: "Part of billable expenses the player earns back" },
                { name: "Tracking", type: "choice", options: ["Weekly", "Monthly"], required: true, default: "Weekly",
                  hint: "Weekly: a target each week, with consequences. Monthly: a target each month, no consequences." },
+               { name: "Consequences Off", label: "Turn off consequences", type: "bool",
+                 hint: "No consequence weeks or levels this season. Weekly targets (and any past-due extra) still apply." },
                { name: "Past Due Extra", type: "money", required: true, default: 15, hint: "Added to the week's target while behind" },
                { name: "Notes", type: "longtext" }
             ] },
@@ -259,6 +261,7 @@ function hockeyWeeks_(season, expenses, earnings, flags, today) {
       .map(e => ({ d: String(e["Date"]).slice(0, 10), a: Number(e["Amount"]) || 0 }));
    const flagOf = {};
    flags.filter(f => f["Season ID"] === sid).forEach(f => flagOf[String(f["Week Start"]).slice(0, 10)] = f);
+   const consOn = !hockeyConsequencesOff_(season);
 
    const weeks = [];
    let cumReq = 0, cumEarn = 0, prevDiff = null, prevMissed = false, level = 0;
@@ -277,8 +280,8 @@ function hockeyWeeks_(season, expenses, earnings, flags, today) {
       const pastDue = prevDiff !== null && prevDiff < -0.005;
       let met = "";
       if (state !== "future") met = exclude ? "Exc" : (diff >= -0.005 ? "Y" : "N");
-      const consequenceWeek = prevMissed;
-      if (state === "done" && met === "N") level++;
+      const consequenceWeek = consOn && prevMissed;
+      if (consOn && state === "done" && met === "N") level++;
       weeks.push({
          n: i + 1, start: wsI, end: weI, state: state, totalExp: hockeyR_(totalExp),
          weeklyRequired: hockeyR_(weeklyRequired), required: hockeyR_(cumReq),
@@ -293,6 +296,9 @@ function hockeyWeeks_(season, expenses, earnings, flags, today) {
    return weeks;
 }
 const hockeyR_ = n => Math.round(n * 100) / 100;
+
+// Season ▸ Turn off consequences (blank = consequences on).
+function hockeyConsequencesOff_(season) { return !!season && (season["Consequences Off"] === true || String(season["Consequences Off"]).toUpperCase() === "TRUE"); }
 
 // "Weekly" (default) or "Monthly".
 function hockeyTracking_(season) { return season && String(season["Tracking"] || "").trim() === "Monthly" ? "Monthly" : "Weekly"; }
@@ -357,14 +363,14 @@ function hockeyMonthStatus_(season, months, expenses, earnings) {
 }
 
 // Summary of a season's weeks: this week, consequence level and the consequences that apply.
-function hockeyStatus_(weeks, consequences) {
+function hockeyStatus_(weeks, consequences, off) {
    const current = weeks.find(w => w.state === "current") || null;
    const done = weeks.filter(w => w.state === "done");
    const level = done.length ? done[done.length - 1].level : 0;
    const list = consequences.filter(c => c["Active"] !== false).sort((a, b) => Number(a["Level"]) - Number(b["Level"]));
    return {
-      current: current, level: level,
-      consequences: list.filter(c => Number(c["Level"]) <= level).map(c => ({ level: Number(c["Level"]), text: c["Consequence"] })),
+      current: current, level: level, consequencesOff: !!off,
+      consequences: off ? [] : list.filter(c => Number(c["Level"]) <= level).map(c => ({ level: Number(c["Level"]), text: c["Consequence"] })),
       behind: done.length ? done[done.length - 1].diff < -0.005 : false
    };
 }
@@ -403,7 +409,7 @@ function hockeyLoad_(req, user) {
    }
    if (can("totals")) {
       out.weeks = weeks;
-      out.status = months ? hockeyMonthStatus_(season, months, expensesAll, earningsAll) : hockeyStatus_(weeks, modRows_(def, "consequences"));
+      out.status = months ? hockeyMonthStatus_(season, months, expensesAll, earningsAll) : hockeyStatus_(weeks, modRows_(def, "consequences"), hockeyConsequencesOff_(season));
       out.consequences = modRows_(def, "consequences");
       if (months) out.months = months;
    } else if (can("earnings")) {
@@ -837,4 +843,13 @@ function hockeyImport2025() {
    } finally {
       lock.releaseLock();
    }
+}
+
+// Adds any new columns (e.g. Seasons ▸ Consequences Off) to the live tabs. Safe to run again.
+function hockeyUpgrade() {
+   modBuildTabs_(hockeyDef_());
+   const sh = modSs_("hockey").getSheetByName("Seasons");
+   const line = "Seasons columns: " + sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].join(", ");
+   console.log(line);
+   return line;
 }

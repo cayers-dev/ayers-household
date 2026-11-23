@@ -200,6 +200,8 @@
   function consequencesCard() {
     const st = D().status;
     if (!st) return "";
+    if (st.consequencesOff) return '<div class="card hk-total"><span>Consequences are turned off this season</span>' +
+      (C.isAdmin() ? '<a class="link-btn" href="#/hockey/list/seasons">Change</a>' : "") + '</div>';
     const all = (D().consequences || []).filter(c => c["Active"] !== false).sort((a, b) => a["Level"] - b["Level"]);
     const body = all.length ? all.map(c => '<div class="list-item ' + (Number(c["Level"]) <= st.level ? "" : "dim") + '"><span class="thumb hk-lvl">' + esc(c["Level"]) + '</span>' +
       '<div class="body"><div class="title">' + esc(c["Consequence"]) + '</div></div>' + (Number(c["Level"]) <= st.level ? pill("Applies", "bad") : "") + '</div>').join("")
@@ -233,7 +235,7 @@
     if (d.earnings) tiles.push(tile("#/hockey/earnings", IC.chore, "Earnings", plural(d.earnings.length, "entry", "entries") + " · " + money(earnTotal)));
     if (d.plan) tiles.push(tile("#/hockey/plan/" + monthKey, IC.calendar, "Chore plan", planned.length ? plural(planned.filter(p => p["Status"] !== "Done").length, "planned chore") + " this month" : "Plan the month"));
     if (d.status && d.status.monthly) tiles.push(tile("#/hockey/weeks", IC.chart, "Monthly totals", d.status.totals.diff < -0.005 ? money(-d.status.totals.diff) + " short" : "On track"));
-    else if (d.status) tiles.push(tile("#/hockey/weeks", IC.chart, "Weekly totals", "Consequence level " + d.status.level));
+    else if (d.status) tiles.push(tile("#/hockey/weeks", IC.chart, "Weekly totals", d.status.consequencesOff ? "Consequences off" : "Consequence level " + d.status.level));
     if (d.expenses) tiles.push(tile("#/hockey/expenses", IC.receipt, "Expenses", money(billable) + " billable"));
     if (d.events) tiles.push(tile("#/hockey/schedule", ICONS.clock, "Schedule", plural(upcoming.length, "upcoming event")));
     if (d.events) tiles.push(tile("#/hockey/venues", IC.pin, "Venues", plural((d.venues || []).filter(v => v["Active"] !== false).length, "venue")));
@@ -357,7 +359,7 @@
     const d = D();
     if (!d.status) return noAccess("Weekly totals");
     if (d.status.monthly) return viewMonths();
-    const canEx = can("totals", "edit");
+    const canEx = can("totals", "edit") && !d.status.consequencesOff;
     const card = w => '<div class="card hk-wk ' + w.state + (w.state === "current" ? " now" : "") + '" id="wk-' + w.start + '">' +
       '<div class="hk-wk-head"><b>Week ' + w.n + '</b><span class="meta">' + esc(weekRange(w)) + '</span><span class="hk-pills">' + metPill(w) +
         (w.consequenceWeek ? pill("Consequence week", "bad") : "") + '</span></div>' +
@@ -379,7 +381,7 @@
       (cur.length ? section("This week", cur.map(card).join("")) : "") +
       (done.length ? section("Past weeks", done.map(card).join("")) : "") +
       (future.length ? section("Coming weeks", hk.showFuture ? future.map(card).join("") : '<button class="btn" data-hk="show-future">Show ' + plural(future.length, "coming week") + '</button>') : "") +
-      '<p class="hint">Each week’s required amount is ' + esc((season() || {})["Share %"]) + '% of billable expenses received so far, minus what earlier weeks already required, spread over the weeks left. Excluded weeks still count toward the totals but not toward consequences.</p>';
+      '<p class="hint">Each week’s required amount is ' + esc((season() || {})["Share %"]) + '% of billable expenses received so far, minus what earlier weeks already required, spread over the weeks left. ' + (d.status.consequencesOff ? "Consequences are turned off for this season (Lists & settings ▸ Seasons)." : "Excluded weeks still count toward the totals but not toward consequences.") + '</p>';
     return { title: "Weekly totals", back: true, html: html, keepScroll: true };
   }
 
