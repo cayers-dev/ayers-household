@@ -750,6 +750,7 @@ function vehiclesSetup() {
       out.push("Vehicles: " + ids.join(", ") + " · features " + vf.length + " · intervals " + iv.length);
    } else out.push("Vehicles already there");
    out.push(vehiclesSetAccess_(owner));
+   out.push(vehiclesUpgrade());   // later additions (safe to repeat)
    coreFlushLog_();
    const ss = modSs_("vehicles");
    const blank = ss.getSheetByName("Sheet1");
