@@ -71,17 +71,19 @@ function doGet() {
 // Every app request: verify the sign-in, run the action, return JSON.
 // Errors raised with coreError_ go back as { ok: false, code, message }.
 function doPost(e) {
+   let user = null;
    try {
       const req = JSON.parse((e && e.postData && e.postData.contents) || "{}");
       if (req.action === "ping") return coreJson_({ ok: true, app: CORE_CONFIG.appName });
       corePrefetch_();   // Permissions, Modules, Areas, Settings in one read (Speed below)
-      const user = req.session ? coreVerifySession_(req.session) : coreVerifyUser_(req.idToken);
+      user = req.session ? coreVerifySession_(req.session) : coreVerifyUser_(req.idToken);
       const result = coreRoute_(req, user);
       coreFlushLog_();
-      return coreJson_(Object.assign({ ok: true }, result, { session: coreIssueSession_(user) }));
+      return coreJson_(Object.assign({ ok: true }, result, { session: coreIssueSession_(user), perm: corePermStamp_(user) }));
    } catch (err) {
       const out = { ok: false, code: err.apiCode || "ERROR", message: err.apiCode ? err.message : "Something went wrong: " + err.message };
       if (err.apiExtra) Object.assign(out, err.apiExtra);
+      if (user) { try { out.perm = corePermStamp_(user); } catch (e2) { /* leave it off */ } }
       if (!err.apiCode) console.error(err && err.stack ? err.stack : err);
       return coreJson_(out);
    }
@@ -91,6 +93,7 @@ function doPost(e) {
 function coreRoute_(req, user) {
    switch (req.action) {
       case "bootstrap":        return coreBootstrap_(user);
+      case "whoami":           return {};   // just the permissions fingerprint (added to every reply)
       case "setMyDueSoon":     return coreWrite_(() => coreSetMyDueSoon_(req, user));
       // Admin
       case "saveUser":         return coreWrite_(() => coreSaveUser_(req, user));
@@ -185,6 +188,14 @@ function coreVerifySession_(token) {
    try { data = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(parts[0])).getDataAsString()); } catch (e) { throw coreError_("AUTH", "Please sign in again."); }
    if (!data || !data.e || !(Number(data.x) > Date.now())) throw coreError_("AUTH", "You were signed out after an hour without using the app. Please sign in again.");
    return coreUserByEmail_(String(data.e).toLowerCase());
+}
+
+// A short fingerprint of what the person may do. Every reply carries it, so an open app
+// notices at once when an admin changes someone's access and reloads its screens.
+function corePermStamp_(user) {
+   const rows = corePermsFor_(user.id).map(p => p.module + "/" + p.area + "=" + p.role).sort();
+   const text = (user.admin ? "A" : "-") + "|" + rows.join(";");
+   return Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, text)).slice(0, 16);
 }
 
 function coreRequireAdmin_(user) {

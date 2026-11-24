@@ -160,8 +160,9 @@ function hockeyToday_() {
 }
 
 // ---- Who sees which season ----
-// A season belongs to one player. The player, editors and admins see it.
-// Data in an area: the player, admins, or someone who is Editor in that area.
+// A season belongs to one player. The player, admins and anyone who is an Editor in any
+// Travel Hockey area see it; inside it, each area follows the person's role there
+// (Viewer = look only, Data Entry = add and change their own, No Access = hidden).
 const HOCKEY_SEASON_TABLES = ["earnings", "plan", "expenses", "events", "weekflags"];
 function hockeyIsEditor_(user, area) {
    if (!user) return true;
@@ -173,7 +174,7 @@ function hockeySeasonVisible_(user, s) {
    return !user || user.admin || String(s["Player ID"] || "") === user.id || hockeyIsEditor_(user);
 }
 function hockeyAreaOk_(user, s, area) {
-   return !user || user.admin || String(s["Player ID"] || "") === user.id || hockeyIsEditor_(user, area);
+   return hockeySeasonVisible_(user, s);
 }
 function hockeySeasonsFor_(def, user, includeClosed) {
    return modRows_(def, "seasons").filter(s => hockeySeasonVisible_(user, s) && (includeClosed || s["Active"] !== false))

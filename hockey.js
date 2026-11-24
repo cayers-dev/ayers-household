@@ -95,6 +95,8 @@
         res = await C.api(action, Object.assign({ module: "hockey", seasonId: hk.seasonId, reload: true }, payload));
       } catch (err) {
         if (["AUTH", "NOT_ALLOWED", "SETUP"].indexOf(err.code) !== -1) return C.authStop(err);
+        // Refused: what's on screen is out of date (access changed, season closed...). Reload it.
+        if (err.code === "FORBIDDEN") { hk.data = null; hk.loading = false; setTimeout(() => load(), 0); }
         throw err;
       } finally { C.busy(false); }
       toast((typeof msg === "function" ? msg(res) : msg) || "Saved");
@@ -615,7 +617,8 @@
       default: return viewHome();
     }
   }
-  C.registerModule("hockey", view);
+  // Access changed (or a save was refused): drop what's loaded so buttons match the new access.
+  C.registerModule("hockey", view, () => { hk.data = null; hk.loading = false; M.clearDeleted("hockey"); });
 
   // ------------------------------------------------------------------
   // Events
