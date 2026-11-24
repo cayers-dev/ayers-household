@@ -308,8 +308,15 @@
       const day = isoDay(new Date(y, m - 1, i));
       const mine = items.filter(p => String(p["Date"]).slice(0, 10) === day);
       list += '<div class="hk-day' + (day === today() ? " today" : "") + '"><div class="hk-day-l"><b>' + i + '</b><span>' + esc(fmtDay(day, { month: undefined, day: undefined })) + '</span></div>' +
-        '<div class="hk-day-chips">' + mine.map(p => '<button class="chip hk-chip' + (p["Status"] === "Done" ? " done" : "") + '" data-hk="plan-item" data-id="' + esc(p["Plan ID"]) + '">' +
-          (p["Status"] === "Done" ? ICONS.check : "") + esc((choreById(p["Chore ID"]) || {})["Chore"] || p["Chore Name"]) + ' <span>' + money(price(p)) + '</span></button>').join("") +
+        '<div class="hk-day-chips">' + mine.map(p => {
+          const name = (choreById(p["Chore ID"]) || {})["Chore"] || p["Chore Name"];
+          const canDel = M.tableCan(ctx, "plan", "delete", p);
+          return '<span class="hk-chipwrap' + (p["Status"] === "Done" ? " done" : "") + (canDel ? " has-x" : "") + '">' +
+            '<button class="chip hk-chip' + (p["Status"] === "Done" ? " done" : "") + '" data-hk="plan-item" data-id="' + esc(p["Plan ID"]) + '">' +
+            (p["Status"] === "Done" ? ICONS.check : "") + esc(name) + ' <span>' + money(price(p)) + '</span></button>' +
+            (canDel ? '<button class="hk-chip-x" data-hk="plan-del" data-id="' + esc(p["Plan ID"]) + '" aria-label="Remove ' + esc(name) + ' from the plan">' + ICONS.close + '</button>' : "") +
+            '</span>';
+        }).join("") +
         (canPlan ? '<button class="chip hk-add" data-hk="plan-add" data-date="' + day + '" aria-label="Plan a chore on ' + esc(fmtDay(day)) + '">' + ICONS.plus + '</button>' : "") + '</div></div>';
     }
     const html =
@@ -324,6 +331,19 @@
       '<p class="hint" style="margin:8px 4px">Tap a planned chore to log it as done. Prices shown are today’s chore prices.</p>' +
       '<div class="card hk-days">' + list + '</div>';
     return { title: "Chore plan", back: true, html: html, keepScroll: true };
+  }
+
+  // × on a planned chore: take it off the plan (a done one asks first; its logged chore stays).
+  async function planDelete(id) {
+    const p = (D().plan || []).find(x => x["Plan ID"] === id);
+    if (!p) return;
+    const name = (choreById(p["Chore ID"]) || {})["Chore"] || p["Chore Name"];
+    if (p["Status"] === "Done") {
+      const ok = await M.confirmSheet({ title: "Remove from the plan?", message: name + " on " + fmtDay(p["Date"]) + " comes off the plan. The chore already logged stays in Earnings.", submitLabel: "Remove", danger: true });
+      if (!ok) return;
+    }
+    try { await ctx.save("modDelete", { table: "plan", id: id }, "Removed " + name + " from the plan"); }
+    catch (err) { toast(err.message, true); }
   }
 
   function planItem(id) {
@@ -639,6 +659,7 @@
       case "add-event": M.recordForm(ctx, "events", "", { title: "Add to schedule" }); break;
       case "plan-add": M.recordForm(ctx, "plan", "", { title: "Plan a chore · " + fmtDay(d.date), prefill: { "Date": d.date }, hide: ["Date"] }); break;
       case "plan-item": planItem(d.id); break;
+      case "plan-del": planDelete(d.id); break;
       case "exclude": toggleExclude(d.week, d.on === "1"); break;
       case "show-future": hk.showFuture = true; C.render(); break;
       case "entries": showEntries(d.from, d.to, d.title); break;

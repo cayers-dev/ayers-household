@@ -806,3 +806,12 @@ body.syncing::before { content: ""; position: fixed; top: 0; left: 0; right: 0; 
 .due-owner:first-child { margin-top: 0; }
 .due-toggle { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--muted); margin-left: auto; }
 .due-toggle + .link-btn { margin-left: 10px; }
+
+/* Chore plan: × on a planned chore */
+.hk-chipwrap { display: inline-flex; align-items: stretch; }
+.hk-chipwrap.has-x .chip.hk-chip { border-radius: 999px 0 0 999px; padding-right: 7px; }
+.hk-chip-x { border: 0; border-left: 1px solid rgba(0, 0, 0, .15); background: var(--primary); color: var(--primary-ink); border-radius: 0 999px 999px 0;
+  padding: 0 9px 0 6px; display: flex; align-items: center; cursor: pointer; font: inherit; }
+.hk-chip-x svg { width: 13px; height: 13px; }
+.hk-chip-x:hover, .hk-chip-x:focus-visible { filter: brightness(.92); }
+.hk-chipwrap.done .hk-chip-x { background: var(--surface-2); color: var(--muted); border-left-color: var(--border); }
