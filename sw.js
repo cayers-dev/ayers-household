@@ -1,6 +1,6 @@
 // Ayers Household service worker: caches the app shell so it opens fast.
 // Data always comes live from the server and is never cached here.
-const CACHE = "hh-shell-v9";
+const CACHE = "hh-shell-v10";
 const SHELL = ["./", "index.html", "styles.css?v=4", "app.js?v=4", "modules.js?v=4", "hockey.js?v=4", "config.js?v=4", "manifest.webmanifest",
                "icons/icon.svg", "icons/icon-192.png", "icons/apple-touch-icon.png"];
 

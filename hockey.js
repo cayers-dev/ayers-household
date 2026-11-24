@@ -522,7 +522,11 @@
   }
 
   // Lists & settings links the person may open: [href, icon, label, info].
+  // The whole section is the "Seasons & Settings" area: without access to it, none of it shows
+  // (admins always have it; Editors have it unless that area is set to No Access).
+  const settingsOk = () => C.isAdmin() || M.can(ctx, "seasons", "view");
   function settingsLinks() {
+    if (!settingsOk()) return [];
     const d = D(), av = a => M.can(ctx, a, "view"), admin = C.isAdmin();
     const listCount = name => (d.lists || []).filter(l => l["List"] === name && l["Active"] !== false).length;
     const out = [];
@@ -578,7 +582,8 @@
     const sch = D().schema[table];
     if (!sch) return noAccess("that list");
     const area = listName ? ((sch.listAreas || {})[listName] || sch.area) : sch.area;
-    if ((sch.adminOnly && table === "settings" && !C.isAdmin()) || !M.can(ctx, area, "view")) return noAccess(titles[table] || listName || "that list");
+    const nice = listName === "Expense Category" ? "Expense categories" : listName === "Event Type" ? "Event types" : listName === "Sport" ? "Sports" : listName;
+    if (!settingsOk() || (sch.adminOnly && table === "settings" && !C.isAdmin()) || !M.can(ctx, area, "view")) return noAccess(nice || titles[table] || "that list");
     const opts = { table: table, list: listName, title: listName ? (listName === "Expense Category" ? "Expense categories" : listName === "Event Type" ? "Event types" : listName === "Sport" ? "Sports" : listName) : titles[table] || table };
     if (table === "chores") { opts.label = r => r["Chore"]; opts.sub = r => money(r["Amount"]); }
     if (table === "consequences") { opts.sort = (a, b) => a["Level"] - b["Level"]; opts.sub = r => "Applies from level " + r["Level"]; opts.label = r => r["Consequence"]; }
