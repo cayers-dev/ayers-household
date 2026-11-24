@@ -235,7 +235,8 @@
     if (!d.seasonId) {
       return { title: "Travel Hockey", back: true, html: '<div class="card"><div class="empty">' +
         (C.isAdmin() ? "No seasons yet. Add one under Lists & settings ▸ Seasons." : "There’s no Travel Hockey season for you. A season shows only to its player, editors and admins.") +
-        '</div></div>' + (settingsLinks().length ? '<div class="section"><div class="home-grid">' + tile("#/hockey/settings", IC.gear, "Lists & settings", "") + '</div></div>' : "") };
+        '</div></div><div class="actions"><button class="btn" data-hk="reload">Try again</button></div>' +
+        (settingsLinks().length ? '<div class="section"><div class="home-grid">' + tile("#/hockey/settings", IC.gear, "Lists & settings", "") + '</div></div>' : "") };
     }
     const upcoming = (d.events || []).filter(e => String(e["Start"]).slice(0, 10) >= today()).sort((a, b) => String(a["Start"]).localeCompare(String(b["Start"])));
     const earnTotal = (d.earnings || []).reduce((s, e) => s + (Number(e["Amount"]) || 0), 0);
@@ -635,6 +636,7 @@
       case "entries": showEntries(d.from, d.to, d.title); break;
       case "sched": hk.schedPast = d.past === "1"; C.render(); break;
       case "retry": hk.error = ""; C.render(); break;
+      case "reload": hk.data = null; hk.seasonId = ""; load(); C.render(); break;
     }
   });
   document.addEventListener("change", e => {
