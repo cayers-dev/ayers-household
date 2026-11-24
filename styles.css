@@ -839,10 +839,13 @@ body.syncing::before { content: ""; position: fixed; top: 0; left: 0; right: 0; 
 .sh-check.off { border-color: var(--border); cursor: default; }
 .sh-item.urgent .sh-check { border-color: var(--danger); }
 .sh-qty { color: var(--muted); font-weight: 600; margin-left: 4px; }
-.sh-readd { display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; }
-.sh-readd svg { width: 15px; height: 15px; }
-.sh-undo { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--tabbar-h) + 76px + env(safe-area-inset-bottom, 0px)); z-index: 40;
-  display: flex; align-items: center; gap: 16px; background: var(--text); color: var(--bg); border-radius: 12px; padding: 10px 16px; box-shadow: var(--shadow);
-  max-width: calc(100% - 32px); }
-.sh-undo span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sh-undo .link-btn { color: var(--primary-soft); font-weight: 700; }
+.sh-check { display: inline-flex; align-items: center; justify-content: center; color: var(--primary-ink); }
+.sh-check svg { width: 15px; height: 15px; }
+.sh-check.on { background: var(--primary); border-color: var(--primary); }
+.sh-item.checked .body { opacity: .5; }
+.sh-item.checked .title { text-decoration: line-through; }
+.sh-item.checked.urgent .sh-check { border-color: var(--primary); }
+.sh-tools { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: -6px 2px 12px; font-size: 14px; }
+.sh-tools .link-btn { padding: 0; }
+.sh-grouptoggle { color: var(--muted); padding: 0; }
+.sh-clear { margin: 4px 0 2px; }
