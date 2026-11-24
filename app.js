@@ -9,7 +9,7 @@
   const CFG = window.HH_CONFIG || {};
   const TOKEN_KEY = "hh_id_token";     // Google sign-in pass (only until the server gives a session)
   const SESSION_KEY = "hh_session";    // the app's own session: { token, exp }
-  const APP_VERSION = "18";
+  const APP_VERSION = "19";
 
   const state = {
     token: null, session: null, sessionExp: 0,
@@ -181,6 +181,7 @@
   // ---------- Access changes reach open apps ----------
   // Every reply carries a fingerprint of the person's permissions. When it changes
   // (an admin changed their access), module screens drop what they loaded and reload.
+  // Besides every reply, a light check runs when the screen changes (at most every 30 seconds).
   const MODULE_RESETS = {};
   let lastPermCheck = 0;
   function notePerm(p) {
@@ -197,8 +198,8 @@
     lastPermCheck = Date.now();
     api("whoami").catch(() => {});
   }
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkPerms(); });
-  setInterval(() => checkPerms(), 120000);
+  // Checked at sign-in (every reply carries it) and whenever the screen changes; no timer.
+  window.addEventListener("hashchange", () => checkPerms());
 
   function handleError(err) {
     if (err.code === "AUTH" && state.me && $(".sheet-backdrop")) { clearToken(); showReauth(err.message); return; }
