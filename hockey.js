@@ -26,7 +26,13 @@
   // Data and the module context used by the shared screens
   // ------------------------------------------------------------------
   const D = () => hk.data;
-  const can = (area, cap) => M.can(ctx, area, cap);
+  // A closed season is view-only for everyone but admins.
+  const SEASON_AREAS = ["earnings", "totals", "expenses", "schedule"];
+  const SEASON_TABLES = ["earnings", "plan", "expenses", "events", "weekflags"];
+  const closedLock = () => !!(hk.data && hk.data.seasonClosed) && !C.isAdmin();
+  const can = (area, cap) => !(cap !== "view" && closedLock() && SEASON_AREAS.indexOf(area) !== -1) && M.can(ctx, area, cap);
+  // "Jasper 2026-27 Hockey"
+  const seasonLabel = s => !s ? "" : s._label || s["Season"];
   const seasonById = id => (D().seasons || []).find(s => s["Season ID"] === id);
   const season = () => seasonById(D().seasonId);
   const choreById = id => (D().chores || []).find(c => c["Chore ID"] === id);
@@ -54,7 +60,8 @@
       seasons: D().seasons, earnings: D().earnings, plan: D().plan, expenses: D().expenses, events: D().events,
       chores: D().chores, venues: D().venues, consequences: D().consequences, lists: D().lists, settings: D().settingsRows
     }[t] || []),
-    refLabel: (t, r) => t === "chores" ? r["Chore"] + " – " + money(r["Amount"]) : t === "seasons" ? r["Season"] :
+    locked: t => closedLock() && SEASON_TABLES.indexOf(t) !== -1,
+    refLabel: (t, r) => t === "chores" ? r["Chore"] + " – " + money(r["Amount"]) : t === "seasons" ? seasonLabel(r) :
       t === "venues" ? r["Name"] : t === "lists" ? r["Value"] : t === "consequences" ? r["Level"] + ". " + r["Consequence"] :
       t === "settings" ? r["Setting"] + ": " + r["Value"] : (r["Title"] || r["Item"] || ""),
     refSort: (t, a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }),
@@ -62,7 +69,8 @@
       const d = {};
       if (["earnings", "plan", "expenses"].indexOf(t) !== -1) d["Date"] = clampToSeason(today());
       if (["earnings", "plan", "expenses", "events"].indexOf(t) !== -1) d["Season ID"] = D().seasonId;
-      if (["expenses", "events"].indexOf(t) !== -1 && D().settings.defaultSport) d["Sport"] = D().settings.defaultSport;
+      if (["expenses", "events"].indexOf(t) !== -1) { const sp = (season() || {})["Sport"] || D().settings.defaultSport; if (sp) d["Sport"] = sp; }
+      if (t === "seasons") { d["Sport"] = D().settings.defaultSport || ""; }
       return d;
     },
     hideField: (t, name, values, row) => {
@@ -142,9 +150,11 @@
 
   function seasonPicker() {
     const ss = D().seasons || [];
-    if (ss.length <= 1) return "";
-    return '<div class="field season-pick"><label for="hk_season">Season</label><select id="hk_season" data-hk="season">' +
-      ss.map(s => '<option value="' + esc(s["Season ID"]) + '"' + (s["Season ID"] === D().seasonId ? " selected" : "") + '>' + esc(s["Season"]) + (s["Active"] === false ? " (closed)" : "") + '</option>').join("") +
+    if (!ss.length) return "";
+    const closed = D().seasonClosed ? " " + pill("Closed" + (C.isAdmin() ? "" : " · view only")) : "";
+    if (ss.length === 1) return '<div class="season-pick season-one"><span class="meta">Season</span><b>' + esc(seasonLabel(ss[0])) + '</b>' + closed + '</div>';
+    return '<div class="field season-pick"><label for="hk_season">Season' + closed + '</label><select id="hk_season" data-hk="season">' +
+      ss.map(s => '<option value="' + esc(s["Season ID"]) + '"' + (s["Season ID"] === D().seasonId ? " selected" : "") + '>' + esc(seasonLabel(s)) + (s["Active"] === false ? " (closed)" : "") + '</option>').join("") +
       '</select></div>';
   }
 
@@ -222,6 +232,11 @@
   // ------------------------------------------------------------------
   function viewHome() {
     const d = D();
+    if (!d.seasonId) {
+      return { title: "Travel Hockey", back: true, html: '<div class="card"><div class="empty">' +
+        (C.isAdmin() ? "No seasons yet. Add one under Lists & settings ▸ Seasons." : "There’s no Travel Hockey season for you. A season shows only to its player, editors and admins.") +
+        '</div></div>' + (settingsLinks().length ? '<div class="section"><div class="home-grid">' + tile("#/hockey/settings", IC.gear, "Lists & settings", "") + '</div></div>' : "") };
+    }
     const upcoming = (d.events || []).filter(e => String(e["Start"]).slice(0, 10) >= today()).sort((a, b) => String(a["Start"]).localeCompare(String(b["Start"])));
     const earnTotal = (d.earnings || []).reduce((s, e) => s + (Number(e["Amount"]) || 0), 0);
     const billable = (d.expenses || []).filter(e => !e["Non-Billable"]).reduce((s, e) => s + (Number(e["Amount"]) || 0), 0);
@@ -239,7 +254,7 @@
     if (d.expenses) tiles.push(tile("#/hockey/expenses", IC.receipt, "Expenses", money(billable) + " billable"));
     if (d.events) tiles.push(tile("#/hockey/schedule", ICONS.clock, "Schedule", plural(upcoming.length, "upcoming event")));
     if (d.events) tiles.push(tile("#/hockey/venues", IC.pin, "Venues", plural((d.venues || []).filter(v => v["Active"] !== false).length, "venue")));
-    tiles.push(tile("#/hockey/settings", IC.gear, "Lists & settings", "Chores, categories, seasons"));
+    if (settingsLinks().length) tiles.push(tile("#/hockey/settings", IC.gear, "Lists & settings", settingsLinks().map(x => x[2]).slice(0, 3).join(", ")));
     const html = seasonPicker() + thisWeekCard() +
       (actions.length ? '<div class="actions hk-actions">' + actions.join("") + '</div>' : "") +
       (d.events ? section("Coming up", upcoming.length ? '<div class="card list">' + upcoming.slice(0, 3).map(eventRow).join("") + '</div>' :
@@ -337,7 +352,8 @@
         '<div><span>Expenses this month</span><b>' + money(mo.monthExp) + '</b></div>' +
         '<div><span>Expenses to date</span><b>' + money(mo.totalExp) + '</b></div>' +
         '<div><span>Earned this month</span><b>' + money(mo.monthEarned) + '</b></div>' +
-      '</div>') + '</div>';
+      '</div>') +
+      (mo.state !== "future" ? '<div class="hk-wk-foot"><span class="meta"></span>' + entriesBtn(mo.start, mo.end, monthName(mo)) + '</div>' : "") + '</div>';
     const cur = d.months.filter(x => x.state === "current");
     const done = d.months.filter(x => x.state === "done").reverse();
     const future = d.months.filter(x => x.state === "future");
@@ -373,6 +389,7 @@
         '<div><span>Difference</span><b class="' + (w.diff < -0.005 ? "neg" : "pos") + '">' + money(w.diff) + '</b></div>' +
       '</div>') +
       '<div class="hk-wk-foot"><span class="meta">Billable expenses to date ' + money(w.totalExp) + (w.note ? ' · ' + esc(w.note) : "") + '</span>' +
+        (w.state !== "future" ? entriesBtn(w.start, w.end, "Week " + w.n + " · " + weekRange(w)) : "") +
         (canEx && w.state !== "future" ? '<button class="link-btn" data-hk="exclude" data-week="' + w.start + '" data-on="' + (w.exclude ? "0" : "1") + '">' + (w.exclude ? "Count again" : "Exclude") + '</button>' : "") + '</div></div>';
     const cur = d.weeks.filter(w => w.state === "current");
     const done = d.weeks.filter(w => w.state === "done").reverse();
@@ -501,33 +518,68 @@
     return { title: v["Name"], back: true, html: html };
   }
 
-  function viewSettings() {
-    const d = D();
+  // Lists & settings links the person may open: [href, icon, label, info].
+  function settingsLinks() {
+    const d = D(), av = a => M.can(ctx, a, "view"), admin = C.isAdmin();
     const listCount = name => (d.lists || []).filter(l => l["List"] === name && l["Active"] !== false).length;
-    const link = (href, icon, label, info) => '<a class="list-item" href="' + href + '"><span class="thumb">' + icon + '</span><div class="body"><div class="title">' + esc(label) + '</div>' +
-      (info ? '<div class="sub">' + esc(info) + '</div>' : "") + '</div><span class="thumb">' + ICONS.next + '</span></a>';
-    const admin = C.isAdmin();
-    const html = '<div class="card list">' +
-      link("#/hockey/list/chores", IC.chore, "Chores and prices", plural((d.chores || []).filter(c => c["Active"] !== false).length, "chore")) +
-      link("#/hockey/list/lists/Expense Category", IC.receipt, "Expense categories", plural(listCount("Expense Category"), "category", "categories")) +
-      link("#/hockey/list/lists/Event Type", ICONS.clock, "Event types", plural(listCount("Event Type"), "type")) +
-      link("#/hockey/venues", IC.pin, "Venues", plural((d.venues || []).filter(v => v["Active"] !== false).length, "venue")) +
-      (d.consequences ? link("#/hockey/list/consequences", IC.warn, "Consequences", plural((d.consequences || []).filter(c => c["Active"] !== false).length, "level")) : "") +
-      link("#/hockey/list/seasons", IC.calendar, "Seasons", (season() || {})["Season"] ? "Viewing " + season()["Season"] : "") +
-      link("#/hockey/list/lists/Sport", ICONS.grid, "Sports", (d.lists || []).filter(l => l["List"] === "Sport" && l["Active"] !== false).map(l => l["Value"]).join(", ")) +
-      (admin ? link("#/hockey/list/settings", IC.gear, "Player and defaults", "") : "") +
-      (admin ? link("#/hockey/deleted", IC.trash, "Deleted items", "Restore or delete permanently") : "") +
-      '</div>' +
+    const out = [];
+    if (av("earnings")) out.push(["#/hockey/list/chores", IC.chore, "Chores", plural((d.chores || []).filter(c => c["Active"] !== false).length, "chore")]);
+    if (av("expenses")) out.push(["#/hockey/list/lists/Expense Category", IC.receipt, "Expense categories", plural(listCount("Expense Category"), "category", "categories")]);
+    if (av("schedule")) out.push(["#/hockey/list/lists/Event Type", ICONS.clock, "Event types", plural(listCount("Event Type"), "type")]);
+    if (av("schedule")) out.push(["#/hockey/venues", IC.pin, "Venues", plural((d.venues || []).filter(v => v["Active"] !== false).length, "venue")]);
+    if (d.consequences && av("totals")) out.push(["#/hockey/list/consequences", IC.warn, "Consequences", plural((d.consequences || []).filter(c => c["Active"] !== false).length, "level")]);
+    if (av("seasons")) out.push(["#/hockey/list/seasons", IC.calendar, "Seasons", season() ? "Viewing " + seasonLabel(season()) : ""]);
+    if (av("seasons")) out.push(["#/hockey/list/lists/Sport", ICONS.grid, "Sports", (d.lists || []).filter(l => l["List"] === "Sport" && l["Active"] !== false).map(l => l["Value"]).join(", ")]);
+    if (admin) out.push(["#/hockey/list/settings", IC.gear, "Defaults", ""]);
+    if (admin) out.push(["#/hockey/deleted", IC.trash, "Deleted items", "Restore or delete permanently"]);
+    return out;
+  }
+
+  function viewSettings() {
+    const links = settingsLinks();
+    if (!links.length) return noAccess("Lists & settings");
+    const link = x => '<a class="list-item" href="' + x[0] + '"><span class="thumb">' + x[1] + '</span><div class="body"><div class="title">' + esc(x[2]) + '</div>' +
+      (x[3] ? '<div class="sub">' + esc(x[3]) + '</div>' : "") + '</div><span class="thumb">' + ICONS.next + '</span></a>';
+    const html = '<div class="card list">' + links.map(link).join("") + '</div>' +
       '<p class="hint">Everything here is also on the Travel Hockey spreadsheet. Changing a chore’s price asks whether this season’s logged entries should change too.</p>';
     return { title: "Lists & settings", back: true, html: html };
   }
 
+  // Earnings and expenses between two days, in a pop-up.
+  function entriesBtn(from, to, title) {
+    if (!D().earnings && !D().expenses) return "";
+    return '<button class="link-btn" data-hk="entries" data-from="' + from + '" data-to="' + to + '" data-title="' + esc(title) + '">Entries</button>';
+  }
+  function showEntries(from, to, title) {
+    const d = D(), inRange = r => { const x = String(r["Date"]).slice(0, 10); return x >= from && x <= to; };
+    const byDate = (a, b) => String(a["Date"]).localeCompare(String(b["Date"]));
+    const row = (left, sub, amt, tag) => '<div class="list-item"><div class="body"><div class="title">' + esc(left) + '</div>' +
+      (sub ? '<div class="sub">' + esc(sub) + '</div>' : "") + '</div><span class="hk-amt">' + money(amt) + (tag ? '<small>' + esc(tag) + '</small>' : "") + '</span></div>';
+    let body = "";
+    if (d.earnings) {
+      const e = d.earnings.filter(inRange).sort(byDate);
+      body += '<div class="section-head hk-ent-head"><b>Earnings</b><span>' + money(e.reduce((t, x) => t + (Number(x["Amount"]) || 0), 0)) + '</span></div>' +
+        '<div class="card list">' + (e.map(x => row(x["Chore Name"], fmtDay(x["Date"]) + (x["Notes"] ? " · " + x["Notes"] : ""), x["Amount"])).join("") || '<div class="empty">No chores logged.</div>') + '</div>';
+    }
+    if (d.expenses) {
+      const x = d.expenses.filter(inRange).sort(byDate);
+      const billable = x.filter(r => !r["Non-Billable"]).reduce((t, r) => t + (Number(r["Amount"]) || 0), 0);
+      body += '<div class="section-head hk-ent-head"><b>Expenses</b><span>' + money(billable) + ' billable</span></div>' +
+        '<div class="card list">' + (x.map(r => row(r["Item"] || r["Category"], fmtDay(r["Date"]) + " · " + r["Category"], r["Amount"], r["Non-Billable"] ? "Non-billable" : "")).join("") || '<div class="empty">No expenses.</div>') + '</div>';
+    }
+    C.openSheet({ title: title, body: body, noSubmit: true, cancelLabel: "Close" });
+  }
+
   function viewList(table, listName) {
-    const titles = { chores: "Chores and prices", consequences: "Consequences", seasons: "Seasons", settings: "Player and defaults", venues: "Venues" };
+    const titles = { chores: "Chores and prices", consequences: "Consequences", seasons: "Seasons", settings: "Defaults", venues: "Venues" };
+    const sch = D().schema[table];
+    if (!sch) return noAccess("that list");
+    const area = listName ? ((sch.listAreas || {})[listName] || sch.area) : sch.area;
+    if ((sch.adminOnly && table === "settings" && !C.isAdmin()) || !M.can(ctx, area, "view")) return noAccess(titles[table] || listName || "that list");
     const opts = { table: table, list: listName, title: listName ? (listName === "Expense Category" ? "Expense categories" : listName === "Event Type" ? "Event types" : listName === "Sport" ? "Sports" : listName) : titles[table] || table };
     if (table === "chores") { opts.label = r => r["Chore"]; opts.sub = r => money(r["Amount"]); }
     if (table === "consequences") { opts.sort = (a, b) => a["Level"] - b["Level"]; opts.sub = r => "Applies from level " + r["Level"]; opts.label = r => r["Consequence"]; }
-    if (table === "seasons") { opts.sort = (a, b) => String(b["Start Date"]).localeCompare(String(a["Start Date"])); opts.sub = r => fmtDay(r["Start Date"], { weekday: undefined, year: "numeric" }) + " – " + fmtDay(r["End Date"], { weekday: undefined, year: "numeric" }) + " · " + r["Share %"] + "% · " + money(r["Past Due Extra"]) + " past-due extra"; opts.label = r => r["Season"]; }
+    if (table === "seasons") { opts.sort = (a, b) => String(b["Start Date"]).localeCompare(String(a["Start Date"])); opts.sub = r => fmtDay(r["Start Date"], { weekday: undefined, year: "numeric" }) + " – " + fmtDay(r["End Date"], { weekday: undefined, year: "numeric" }) + " · " + r["Share %"] + "% · " + (r["Tracking"] || "Weekly") + (r["Consequences Off"] === true ? " · consequences off" : ""); opts.label = r => seasonLabel(r); }
     if (table === "settings") {
       opts.label = r => r["Setting"];
       opts.sub = r => r["Setting"] === "Player" ? M.userLabel(ctx, r["Value"]) : r["Value"];
@@ -580,6 +632,7 @@
       case "plan-item": planItem(d.id); break;
       case "exclude": toggleExclude(d.week, d.on === "1"); break;
       case "show-future": hk.showFuture = true; C.render(); break;
+      case "entries": showEntries(d.from, d.to, d.title); break;
       case "sched": hk.schedPast = d.past === "1"; C.render(); break;
       case "retry": hk.error = ""; C.render(); break;
     }

@@ -793,3 +793,16 @@ body.syncing::before { content: ""; position: fixed; top: 0; left: 0; right: 0; 
 .hk-lvl { font-weight: 750; color: var(--muted); }
 .thumb.hk-date { display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; font-size: 18px; font-weight: 750; color: var(--primary); }
 .thumb.hk-date b { font-size: 11px; font-weight: 650; text-transform: uppercase; color: var(--muted); margin-bottom: 2px; }
+
+/* Season heading when there's only one; entries pop-up headings; Home owner groups */
+.season-one { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 2px 2px 0; }
+.season-one b { font-size: 17px; }
+.season-pick label .pill { margin-left: 6px; }
+.hk-ent-head { display: flex; justify-content: space-between; align-items: baseline; margin: 14px 2px 6px; }
+.hk-ent-head:first-child { margin-top: 0; }
+.hk-ent-head b { font-size: 15px; }
+.hk-ent-head span { color: var(--muted); font-weight: 650; }
+.due-owner { margin: 12px 4px 6px; font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.due-owner:first-child { margin-top: 0; }
+.due-toggle { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--muted); margin-left: auto; }
+.due-toggle + .link-btn { margin-left: 10px; }

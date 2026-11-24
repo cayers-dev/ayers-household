@@ -25,9 +25,11 @@ function hockeyDef_() {
       areas: ["earnings", "totals", "expenses", "schedule", "seasons"],
       tables: {
          seasons: { tab: "Seasons", label: "Seasons", id: "Season ID", prefix: "SEA-", kind: "list", area: "seasons", adminOnly: true,
-            unique: ["Season"], title: r => r["Season"],
+            unique: ["Season", "Player ID", "Sport"], title: r => r["Season"],
             fields: [
                { name: "Season", type: "text", required: true, hint: "e.g. 2026-27" },
+               { name: "Player ID", label: "Player", type: "user", required: true, hint: "Only this person, editors and admins see the season" },
+               { name: "Sport", type: "list", list: "Sport", required: true },
                { name: "Start Date", type: "date", required: true },
                { name: "End Date", type: "date", required: true },
                { name: "Share %", type: "percent", required: true, default: 20, hint: "Part of billable expenses the player earns back" },
@@ -139,6 +141,7 @@ function hockeyDef_() {
       beforeSave: hockeyBeforeSave_,
       afterSave: hockeyAfterSave_,
       afterDelete: hockeyAfterDelete_,
+      guard: hockeyGuard_,
       home: hockeyHome_,
       actions: {
          load:       { fn: hockeyLoad_ },
@@ -156,21 +159,71 @@ function hockeyToday_() {
    return Utilities.formatDate(new Date(), coreSs_().getSpreadsheetTimeZone(), "yyyy-MM-dd");
 }
 
-// The season to use when none is picked: the open one covering today, else the latest open one.
-function hockeyCurrentSeason_(def) {
-   const today = hockeyToday_();
-   const open = modRows_(def, "seasons").filter(s => s["Active"] !== false)
+// ---- Who sees which season ----
+// A season belongs to one player. The player, editors and admins see it.
+// Data in an area: the player, admins, or someone who is Editor in that area.
+const HOCKEY_SEASON_TABLES = ["earnings", "plan", "expenses", "events", "weekflags"];
+function hockeyIsEditor_(user, area) {
+   if (!user) return true;
+   if (user.admin) return true;
+   const areas = area ? [area] : hockeyDef_().areas;
+   return areas.some(a => coreRoleFor_(user, "hockey", a) === "Editor");
+}
+function hockeySeasonVisible_(user, s) {
+   return !user || user.admin || String(s["Player ID"] || "") === user.id || hockeyIsEditor_(user);
+}
+function hockeyAreaOk_(user, s, area) {
+   return !user || user.admin || String(s["Player ID"] || "") === user.id || hockeyIsEditor_(user, area);
+}
+function hockeySeasonsFor_(def, user, includeClosed) {
+   return modRows_(def, "seasons").filter(s => hockeySeasonVisible_(user, s) && (includeClosed || s["Active"] !== false))
       .sort((a, b) => String(b["Start Date"]).localeCompare(String(a["Start Date"])));
-   return open.find(s => s["Start Date"] <= today && today <= s["End Date"]) || open[0] ||
-          modRows_(def, "seasons").sort((a, b) => String(b["Start Date"]).localeCompare(String(a["Start Date"])))[0] || null;
+}
+// "Jasper 2026-27 Hockey"
+function hockeySeasonLabel_(s) {
+   if (!s) return "";
+   const u = coreGetUsers_().find(x => x.id === s["Player ID"]);
+   return [u ? String(u.name).split(" ")[0] : "", s["Season"], s["Sport"]].filter(Boolean).join(" ");
 }
 
-// The season a date falls in (open seasons first), else the current season.
-function hockeySeasonForDate_(def, dateStr) {
-   const all = modRows_(def, "seasons");
+// The season to use when none is picked: an open one covering today (the person's own first),
+// else the latest open one, else the latest.
+function hockeyCurrentSeason_(def, user) {
+   const today = hockeyToday_();
+   const open = hockeySeasonsFor_(def, user, false);
+   const covering = open.filter(s => s["Start Date"] <= today && today <= s["End Date"]);
+   const mine = s => user && s["Player ID"] === user.id;
+   return covering.find(mine) || covering[0] || open.find(mine) || open[0] || hockeySeasonsFor_(def, user, true)[0] || null;
+}
+
+// The season a date falls in (the person's own and open ones first), else the current season.
+function hockeySeasonForDate_(def, dateStr, user) {
+   const all = hockeySeasonsFor_(def, user, true);
    const inRange = s => s["Start Date"] <= dateStr && dateStr <= s["End Date"];
-   const hit = all.filter(s => s["Active"] !== false).find(inRange) || all.find(inRange);
-   return hit || hockeyCurrentSeason_(def);
+   const mine = s => user && s["Player ID"] === user.id;
+   const open = all.filter(s => s["Active"] !== false && inRange(s));
+   return open.find(mine) || open[0] || all.find(inRange) || hockeyCurrentSeason_(def, user);
+}
+
+// Rules on top of roles for season entries: whose season it is, and closed seasons.
+function hockeyGuard_(user, tableKey, op, row, values) {
+   if (HOCKEY_SEASON_TABLES.indexOf(tableKey) === -1 || !user) return;
+   const def = hockeyDef_();
+   const merged = Object.assign({}, row || {}, values || {});
+   const sid = merged["Season ID"];
+   if (!sid) return;
+   const check = id => {
+      const season = modRows_(def, "seasons", true).find(x => x["Season ID"] === id);
+      if (!season) return;
+      if (!hockeyAreaOk_(user, season, def.tables[tableKey].area)) {
+         throw coreError_("FORBIDDEN", "The " + hockeySeasonLabel_(season) + " season isn't yours to change.");
+      }
+      if (season["Active"] === false && !user.admin) {
+         throw coreError_("FORBIDDEN", "The " + hockeySeasonLabel_(season) + " season is closed. Only admins can change it.");
+      }
+   };
+   check(sid);
+   if (row && values && values["Season ID"] && values["Season ID"] !== row["Season ID"]) check(row["Season ID"]);
 }
 
 const hockeyIso_ = d => d instanceof Date ? Utilities.formatDate(d, coreSs_().getSpreadsheetTimeZone(), "yyyy-MM-dd") : String(d || "").slice(0, 10);
@@ -198,8 +251,10 @@ function hockeyBeforeSave_(tableKey, values, before, user, req) {
    // Season: picked, else the one the date falls in.
    if (["earnings", "plan", "events", "expenses"].indexOf(tableKey) !== -1 && !merged["Season ID"]) {
       const d = tableKey === "events" ? hockeyIso_(merged["Start"]) : hockeyIso_(merged["Date"]);
-      const s = d ? hockeySeasonForDate_(def, d) : hockeyCurrentSeason_(def);
+      const s = d ? hockeySeasonForDate_(def, d, user) : hockeyCurrentSeason_(def, user);
       if (s) values["Season ID"] = s["Season ID"];
+      if (!s) throw coreError_("INVALID", "There's no Travel Hockey season for you to add this to.");
+      hockeyGuard_(user, tableKey, before ? "edit" : "add", before, values);
    }
    if (tableKey === "events" && merged["End"] && merged["Start"] && hockeyStamp_(merged["End"]) < hockeyStamp_(merged["Start"])) {
       throw coreError_("INVALID", "The end time is before the start time.");
@@ -209,7 +264,7 @@ function hockeyBeforeSave_(tableKey, values, before, user, req) {
    }
    // A new price for a chore: ask whether this season's entries should change too.
    if (tableKey === "chores" && before && values["Amount"] !== undefined && Number(values["Amount"]) !== Number(before["Amount"])) {
-      const season = req.seasonId ? modRows_(def, "seasons").find(s => s["Season ID"] === req.seasonId) : hockeyCurrentSeason_(def);
+      const season = req.seasonId ? modRows_(def, "seasons").find(s => s["Season ID"] === req.seasonId) : hockeyCurrentSeason_(def, user);
       const affected = season ? modRows_(def, "earnings").filter(e => e["Chore ID"] === before["Chore ID"] &&
          e["Season ID"] === season["Season ID"] && Number(e["Amount"]) !== Number(values["Amount"])) : [];
       if (affected.length && req.applyToSeason === undefined) {
@@ -386,39 +441,43 @@ function hockeyLoad_(req, user) {
    const can = a => coreCan_(user, "hockey", a, "view");
    if (!def.areas.some(can)) throw coreError_("FORBIDDEN", "You don't have access to Travel Hockey.");
    modPrefetch_(def);   // every tab in one read
-   const seasons = modRows_(def, "seasons").sort((a, b) => String(b["Start Date"]).localeCompare(String(a["Start Date"])));
-   const season = (req.seasonId && seasons.find(s => s["Season ID"] === req.seasonId)) || hockeyCurrentSeason_(def);
+   const seasons = hockeySeasonsFor_(def, user, true);
+   const season = (req.seasonId && seasons.find(s => s["Season ID"] === req.seasonId)) || hockeyCurrentSeason_(def, user);
    const sid = season ? season["Season ID"] : "";
+   // An area's entries: this season, and only if the person may see that area of it.
+   const shows = a => can(a) && season && hockeyAreaOk_(user, season, a);
    const inSeason = r => r["Season ID"] === sid;
    const today = hockeyToday_();
    const expensesAll = modRows_(def, "expenses"), earningsAll = modRows_(def, "earnings");
    const tracking = hockeyTracking_(season);
-   const weeks = tracking === "Weekly" ? hockeyWeeks_(season, expensesAll, earningsAll, modRows_(def, "weekflags"), today) : [];
-   const months = tracking === "Monthly" ? hockeyMonths_(season, expensesAll, earningsAll, today) : null;
+   const weeks = season && tracking === "Weekly" ? hockeyWeeks_(season, expensesAll, earningsAll, modRows_(def, "weekflags"), today) : [];
+   const months = season && tracking === "Monthly" ? hockeyMonths_(season, expensesAll, earningsAll, today) : null;
    const out = {
-      today: today, seasons: seasons, seasonId: sid, tracking: tracking,
+      today: today, seasons: seasons.map(s => Object.assign({ _label: hockeySeasonLabel_(s) }, s)), seasonId: sid, tracking: tracking,
+      seasonClosed: !!(season && season["Active"] === false),
       schema: modSchema_(def), caps: modCaps_(def, user),
       chores: modRows_(def, "chores"), venues: modRows_(def, "venues"),
       lists: modRows_(def, "lists"),
-      settings: { defaultSport: hockeySetting_(def, "Default Sport", ""), playerId: hockeySetting_(def, "Player", "") },
-      users: coreGetUsers_().map(u => ({ id: u.id, name: u.name }))
+      settings: { defaultSport: hockeySetting_(def, "Default Sport", ""), playerId: season ? season["Player ID"] || "" : "" },
+      users: coreGetUsers_().map(u => ({ id: u.id, name: u.name })),
+      editor: hockeyIsEditor_(user)
    };
-   if (can("earnings")) {
+   if (shows("earnings")) {
       out.earnings = earningsAll.filter(inSeason);
       out.plan = modRows_(def, "plan").filter(inSeason);
    }
-   if (can("totals")) {
+   if (shows("totals")) {
       out.weeks = weeks;
       out.status = months ? hockeyMonthStatus_(season, months, expensesAll, earningsAll) : hockeyStatus_(weeks, modRows_(def, "consequences"), hockeyConsequencesOff_(season));
       out.consequences = modRows_(def, "consequences");
       if (months) out.months = months;
-   } else if (can("earnings")) {
+   } else if (shows("earnings")) {
       // Planning needs the month's required amount even without the totals screen.
       out.weeks = weeks.map(w => ({ start: w.start, end: w.end, weeklyRequired: w.weeklyRequired, state: w.state }));
       if (months) out.months = months.map(x => ({ start: x.start, end: x.end, toEarn: x.toEarn, state: x.state }));
    }
-   if (can("expenses")) out.expenses = expensesAll.filter(inSeason);
-   if (can("schedule")) out.events = modRows_(def, "events").filter(inSeason);
+   if (shows("expenses")) out.expenses = expensesAll.filter(inSeason);
+   if (shows("schedule")) out.events = modRows_(def, "events").filter(inSeason);
    if (user.admin) out.settingsRows = modRows_(def, "settings");
    return out;
 }
@@ -440,6 +499,7 @@ function hockeySetExclude_(req, user) {
    const def = hockeyDef_();
    if (!coreCan_(user, "hockey", "totals", "edit")) throw coreError_("FORBIDDEN", "Only editors and admins can exclude weeks.");
    const season = modFind_(def, "seasons", req.seasonId);
+   hockeyGuard_(user, "weekflags", "edit", null, { "Season ID": season["Season ID"] });
    const ws = hockeyIso_(modParseDate_(req.weekStart));
    if (hockeyTracking_(season) !== "Weekly") throw coreError_("INVALID", "Weeks can only be excluded in a season tracked weekly.");
    if (!hockeyWeeks_(season, [], [], [], hockeyToday_()).some(w => w.start === ws)) throw coreError_("INVALID", "That isn't a week of this season.");
@@ -450,45 +510,56 @@ function hockeySetExclude_(req, user) {
    return { exclude: !!req.exclude };
 }
 
-// Home: this week's target and upcoming schedule, for Due Soon and the Home tile.
+// Home: each visible open season's target this week/month and its upcoming schedule.
+// Every Due Soon item says whose it is (the season's player); Home shows people their own
+// unless they tick "Show everyone's".
 function hockeyHome_(user, days) {
    const def = hockeyDef_();
    const out = { dueSoon: [] };
    modPrefetch_(def);
-   const season = hockeyCurrentSeason_(def);
-   if (!season) return out;
    const today = hockeyToday_();
    const tz = coreSs_().getSpreadsheetTimeZone();
-   if (coreCan_(user, "hockey", "totals", "view") && hockeyTracking_(season) === "Monthly") {
-      const mo = hockeyMonths_(season, modRows_(def, "expenses"), modRows_(def, "earnings"), today).find(x => x.state === "current");
-      if (mo) {
-         const left = Math.max(0, mo.required - mo.earned);
-         out.summary = left > 0 ? "This month: $" + left.toFixed(2) + " to go" : "This month: on track";
-         if (left > 0) out.dueSoon.push({ title: "Earn $" + left.toFixed(2) + " in chores", when: "by " + hockeyNiceDate_(mo.end),
-            sortKey: mo.end + "T23:59", href: "#/hockey/weeks" });
+   const users = coreGetUsers_();
+   const seasons = hockeySeasonsFor_(def, user, false).filter(s => s["Start Date"] <= today && today <= s["End Date"]);
+   if (!seasons.length) return out;
+   const expenses = modRows_(def, "expenses"), earnings = modRows_(def, "earnings");
+   const summaries = [];
+   seasons.forEach(season => {
+      const owner = String(season["Player ID"] || "");
+      const ou = users.find(u => u.id === owner);
+      const tag = { owner: owner, ownerName: ou ? ou.name : "" };
+      const first = ou ? String(ou.name).split(" ")[0] : "";
+      if (coreCan_(user, "hockey", "totals", "view") && hockeyAreaOk_(user, season, "totals")) {
+         let left = null, end = "", label = "", extra = "";
+         if (hockeyTracking_(season) === "Monthly") {
+            const mo = hockeyMonths_(season, expenses, earnings, today).find(x => x.state === "current");
+            if (mo) { left = Math.max(0, mo.required - mo.earned); end = mo.end; label = "This month"; }
+         } else {
+            const w = hockeyWeeks_(season, expenses, earnings, modRows_(def, "weekflags"), today).find(x => x.state === "current");
+            if (w) { left = Math.max(0, w.remaining); end = w.end; label = "This week"; extra = w.pastDue ? " (includes past-due extra)" : ""; }
+         }
+         if (left !== null) {
+            summaries.push({ mine: owner === user.id, text: (owner === user.id || seasons.length === 1 && !first ? "" : first + ": ") +
+               label + ": " + (left > 0 ? "$" + left.toFixed(2) + " to go" : "on track") });
+            if (left > 0) out.dueSoon.push(Object.assign({ title: "Earn $" + left.toFixed(2) + " in chores" + extra,
+               when: "by " + hockeyNiceDate_(end), sortKey: end + "T23:59", href: "#/hockey/weeks" }, tag));
+         }
       }
-   } else if (coreCan_(user, "hockey", "totals", "view")) {
-      const weeks = hockeyWeeks_(season, modRows_(def, "expenses"), modRows_(def, "earnings"), modRows_(def, "weekflags"), today);
-      const w = weeks.find(x => x.state === "current");
-      if (w) {
-         const left = Math.max(0, w.remaining);
-         out.summary = left > 0 ? "This week: $" + left.toFixed(2) + " to go" : "This week: on track";
-         if (left > 0) out.dueSoon.push({ title: "Earn $" + left.toFixed(2) + " in chores" + (w.pastDue ? " (includes past-due extra)" : ""),
-            when: "by " + hockeyNiceDate_(w.end), sortKey: w.end + "T23:59", href: "#/hockey/weeks" });
+      if (coreCan_(user, "hockey", "schedule", "view") && hockeyAreaOk_(user, season, "schedule")) {
+         const until = Utilities.formatDate(new Date(Date.now() + days * 86400000), tz, "yyyy-MM-dd'T'HH:mm");
+         const now = Utilities.formatDate(new Date(), tz, "yyyy-MM-dd'T'HH:mm");
+         const venues = modRows_(def, "venues");
+         modRows_(def, "events").filter(e => e["Season ID"] === season["Season ID"] && e["Start"] >= now.slice(0, 10) && e["Start"] <= until)
+            .sort((a, b) => String(a["Start"]).localeCompare(String(b["Start"]))).slice(0, 10)
+            .forEach(e => {
+               const v = venues.find(x => x["Venue ID"] === e["Venue ID"]);
+               out.dueSoon.push(Object.assign({ title: [e["Type"], e["Title"]].filter(Boolean).join(": ") + (v ? " at " + v["Name"] : ""),
+                  when: hockeyNiceDate_(e["Start"]) + hockeyNiceTime_(e["Start"]), sortKey: e["Start"], href: "#/hockey/event/" + encodeURIComponent(e["Event ID"]) }, tag));
+            });
       }
-   }
-   if (coreCan_(user, "hockey", "schedule", "view")) {
-      const until = Utilities.formatDate(new Date(Date.now() + days * 86400000), tz, "yyyy-MM-dd'T'HH:mm");
-      const now = Utilities.formatDate(new Date(), tz, "yyyy-MM-dd'T'HH:mm");
-      const venues = modRows_(def, "venues");
-      modRows_(def, "events").filter(e => e["Start"] >= now.slice(0, 10) && e["Start"] <= until)
-         .sort((a, b) => String(a["Start"]).localeCompare(String(b["Start"]))).slice(0, 10)
-         .forEach(e => {
-            const v = venues.find(x => x["Venue ID"] === e["Venue ID"]);
-            out.dueSoon.push({ title: [e["Type"], e["Title"]].filter(Boolean).join(": ") + (v ? " at " + v["Name"] : ""),
-               when: hockeyNiceDate_(e["Start"]) + hockeyNiceTime_(e["Start"]), sortKey: e["Start"], href: "#/hockey/event/" + encodeURIComponent(e["Event ID"]) });
-         });
-   }
+   });
+   summaries.sort((a, b) => b.mine - a.mine);
+   if (summaries.length) out.summary = summaries.map(x => x.text).join(" · ");
    return out;
 }
 function hockeyNiceDate_(s) {
@@ -524,7 +595,7 @@ function hockeySetup() {
    modBuildTabs_(def);
    const owner = coreGetUsers_(true).find(u => u.admin) || { id: "USR-1" };
 
-   modSeed_(def, "seasons", [{ "Season": "2026-27", "Start Date": coreDate_("2026-04-27"), "End Date": coreDate_("2027-02-28"),
+   modSeed_(def, "seasons", [{ "Season": "2026-27", "Player ID": "USR-3", "Sport": "Hockey", "Start Date": coreDate_("2026-04-27"), "End Date": coreDate_("2027-02-28"),
       "Share %": 20, "Tracking": "Weekly", "Past Due Extra": 15, "Notes": "From the original 2026-27 Travel Hockey sheet" }], owner);
    modSeed_(def, "chores", HOCKEY_SEED.chores.map(c => ({ "Chore": c[0], "Amount": c[1] })), owner);
    modSeed_(def, "venues", HOCKEY_SEED.venues.map(v => ({ "Name": v })), owner);
@@ -814,7 +885,7 @@ function hockeyImport2025() {
    try {
       // This season (2026-27) says Weekly; the new one is Monthly.
       modRows_(def, "seasons").filter(r => !String(r["Tracking"] || "").trim()).forEach(r => modChange_(def, "seasons", r, { "Tracking": "Weekly" }, owner));
-      const sid = modBulkInsert_(def, "seasons", [{ "Season": "2025-26", "Start Date": coreDate_("2025-06-01"), "End Date": coreDate_("2026-02-28"),
+      const sid = modBulkInsert_(def, "seasons", [{ "Season": "2025-26", "Player ID": hockeySetting_(def, "Player", "") || "USR-3", "Sport": hockeySetting_(def, "Default Sport", "") || "Hockey", "Start Date": coreDate_("2025-06-01"), "End Date": coreDate_("2026-02-28"),
          "Share %": 25, "Tracking": "Monthly", "Past Due Extra": 0,
          "Notes": "From the 2025-26 Travel Hockey sheet: a target each month, no consequences" }], owner)[0];
       const choreIds = modBulkInsert_(def, "chores", newChores, owner);
@@ -848,6 +919,17 @@ function hockeyImport2025() {
 // Adds any new columns (e.g. Seasons ▸ Consequences Off) to the live tabs. Safe to run again.
 function hockeyUpgrade() {
    modBuildTabs_(hockeyDef_());
+   CORE_GRID = {}; MOD_ROWS = {};
+   const def = hockeyDef_();
+   const owner = coreGetUsers_(true).find(u => u.id === "USR-1") || coreGetUsers_(true).find(u => u.admin);
+   const player = hockeySetting_(def, "Player", "") || "USR-3", sport = hockeySetting_(def, "Default Sport", "") || "Hockey";
+   modRows_(def, "seasons", true).forEach(r => {
+      const v = {};
+      if (!String(r["Player ID"] || "").trim()) v["Player ID"] = player;
+      if (!String(r["Sport"] || "").trim()) v["Sport"] = sport;
+      if (Object.keys(v).length) modChange_(def, "seasons", r, v, owner);
+   });
+   coreFlushLog_();
    const sh = modSs_("hockey").getSheetByName("Seasons");
    const line = "Seasons columns: " + sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].join(", ");
    console.log(line);

@@ -166,6 +166,8 @@ function modRequire_(user, def, t, op, row, values) {
       throw coreError_("FORBIDDEN", op === "add" ? "You don't have access to add " + t.label.toLowerCase() + "." :
          "You can only " + (op === "edit" ? "change" : "delete") + " entries you added.");
    }
+   // Module rules on top (e.g. Travel Hockey: whose season it is, closed seasons).
+   if (def.guard) def.guard(user, Object.keys(def.tables).find(k => def.tables[k] === t), op, row, values);
 }
 
 

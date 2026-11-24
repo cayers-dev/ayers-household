@@ -9,7 +9,7 @@
   const CFG = window.HH_CONFIG || {};
   const TOKEN_KEY = "hh_id_token";     // Google sign-in pass (only until the server gives a session)
   const SESSION_KEY = "hh_session";    // the app's own session: { token, exp }
-  const APP_VERSION = "6";
+  const APP_VERSION = "7";
 
   const state = {
     token: null, session: null, sessionExp: 0,
@@ -406,11 +406,29 @@
     // A module saved something since Home was loaded: refresh Due Soon quietly.
     if (state.homeStale) { state.homeStale = false; setTimeout(refreshInBackground, 0); }
     const days = state.me.dueSoonDays || 30;
-    const due = state.dueSoon || [];
-    const dueHtml = due.length
-      ? '<div class="card list">' + due.map(d => '<a class="list-item" href="' + esc(d.href || "#/") + '"><div class="body"><div class="title">' + esc(d.title) + '</div>' +
-          '<div class="sub">' + esc([d.when, d.module].filter(Boolean).join(" · ")) + '</div></div></a>').join("") + '</div>'
-      : '<div class="card"><div class="empty">Nothing due in the next ' + plural(days, "day") + '. Bills, service, insurance and other reminders show here as each module is added.</div></div>';
+    const all = state.dueSoon || [];
+    // Your own items (or ones that belong to no one) unless "Show everyone's" is ticked.
+    const mine = d => !d.owner || d.owner === state.me.id;
+    const others = all.some(d => !mine(d));
+    const showAll = others && dueShowAll();
+    const due = showAll ? all : all.filter(mine);
+    const dueRow = d => '<a class="list-item" href="' + esc(d.href || "#/") + '"><div class="body"><div class="title">' + esc(d.title) + '</div>' +
+      '<div class="sub">' + esc([d.when, d.module].filter(Boolean).join(" · ")) + '</div></div></a>';
+    let dueHtml;
+    if (!due.length) {
+      dueHtml = '<div class="card"><div class="empty">' + (others ? "Nothing of yours due in the next " + plural(days, "day") + ". Tick Show everyone’s to see the rest of the household."
+        : "Nothing due in the next " + plural(days, "day") + ". Bills, service, insurance and other reminders show here as each module is added.") + '</div></div>';
+    } else if (showAll) {
+      // One group per person: you first, then by name, then items that belong to no one.
+      const groups = {};
+      due.forEach(d => { const k = d.owner || ""; (groups[k] = groups[k] || { name: d.owner === state.me.id ? "Mine" : d.ownerName || "Everyone", items: [] }).items.push(d); });
+      const keys = Object.keys(groups).sort((a, b) => (b === state.me.id) - (a === state.me.id) || (a === "") - (b === "") || groups[a].name.localeCompare(groups[b].name));
+      dueHtml = keys.map(k => '<div class="due-owner">' + esc(groups[k].name) + '</div><div class="card list">' + groups[k].items.map(dueRow).join("") + '</div>').join("");
+    } else {
+      dueHtml = '<div class="card list">' + due.map(dueRow).join("") + '</div>';
+    }
+    const dueHead = (others ? '<label class="due-toggle"><input type="checkbox" data-act="due-all"' + (showAll ? " checked" : "") + '> Show everyone’s</label>' : "") +
+      '<button class="link-btn" data-act="due-days">Next ' + plural(days, "day") + '</button>';
     const tasks = state.tasks || [];
     const tasksHtml = tasks.length
       ? '<div class="card list">' + tasks.map(t => '<div class="list-item"><div class="body"><div class="title">' + esc(t.title) + '</div>' +
@@ -422,12 +440,16 @@
       return tile(built ? "#/" + m.key : "#/module/" + encodeURIComponent(m.key), moduleIcon(m.key), m.name, info, built ? "" : "dim");
     }).join("");
     const html =
-      section("Due soon", dueHtml, '<button class="link-btn" data-act="due-days">Next ' + plural(days, "day") + '</button>') +
+      section("Due soon", dueHtml, dueHead) +
       section("My tasks", tasksHtml) +
       section("Modules", state.modules.length ? '<div class="home-grid">' + tiles + '</div>'
         : '<div class="card"><div class="empty">You don\'t have access to any modules yet. Ask Chris to set your permissions.</div></div>');
     return { title: "Ayers Household", html: html };
   }
+
+  // "Show everyone's" on Home: remembered on this device.
+  function dueShowAll() { try { return localStorage.getItem("hh-due-all") === "1"; } catch (e) { return !!state.dueAll; } }
+  function setDueShowAll(on) { state.dueAll = on; try { localStorage.setItem("hh-due-all", on ? "1" : "0"); } catch (e) { /* in memory only */ } }
 
   function dueDaysForm() {
     const days = state.me.dueSoonDays || 30;
@@ -805,6 +827,7 @@
       render();
     }
     if (t.matches("[data-act='log-module']")) { state.logModule = t.value; render(); }
+    if (t.matches("[data-act='due-all']")) { setDueShowAll(t.checked); render(); }
   });
   window.addEventListener("hashchange", () => {
     if (!state.me) return;

@@ -39,6 +39,7 @@
   function tableCan(ctx, table, op, row, values) {
     const t = ctx.schema(table), me = C.state.me;
     if (t.adminOnly && !me.admin) return false;
+    if (op !== "view" && ctx.locked && ctx.locked(table, row, values)) return false;
     const area = tableArea(ctx, table, Object.assign({}, row || {}, values || {}));
     if (t.kind === "list") return can(ctx, area, "addListValue");
     if (op === "add") return can(ctx, area, "add");
@@ -70,6 +71,22 @@
     return false;
   }
 
+  // A value as text, for read-only forms.
+  function shownValue(ctx, f, v) {
+    if (f.type === "bool") return v === true ? "Yes" : "No";
+    if (v === "" || v === null || v === undefined) return "";
+    if (f.type === "money") return money(v);
+    if (f.type === "percent") return v + "%";
+    if (f.type === "date") return fmtDay(v, { year: "numeric" });
+    if (f.type === "datetime") return fmtDayTime(v);
+    if (f.type === "user") return userName(ctx, v);
+    if (f.type === "ref") {
+      const rt = ctx.schema(f.ref), r = ctx.rows(f.ref).find(x => x[rt.id] === v);
+      return r ? ctx.refLabel(f.ref, r) : v;
+    }
+    return String(v);
+  }
+
   function fieldHtml(ctx, table, f, value, opts) {
     opts = opts || {};
     const id = "f_" + table + "_" + f.name.replace(/\W+/g, "_");
@@ -79,10 +96,9 @@
     const lab = '<label for="' + id + '">' + label + (f.required ? ' <span class="req">*</span>' : "") + '</label>';
     const hint = f.hint ? '<div class="hint">' + esc(f.hint) + '</div>' : "";
     if (opts.hidden) return '<input type="hidden" name="' + esc(f.name) + '" value="' + esc(v) + '">';
-    if (f.readOnly) {
-      if (v === "") return "";
-      const shown = f.type === "money" ? money(v) : v;
-      return '<div class="field"><label>' + label + '</label><div class="ro-value">' + esc(shown) + '</div>' + hint + '</div>';
+    if (f.readOnly || opts.readOnly) {
+      if (v === "" && f.type !== "bool") return "";
+      return '<div class="field"><label>' + label + '</label><div class="ro-value">' + esc(shownValue(ctx, f, v)) + '</div>' + (opts.readOnly ? "" : hint) + '</div>';
     }
     let input;
     switch (f.type) {
@@ -92,6 +108,12 @@
           '<option value="">' + (f.required ? "Choose…" : "") + '</option>' +
           choices.map(c => '<option value="' + esc(c.value) + '"' + (String(c.value) === String(v) ? " selected" : "") + '>' + esc(c.label) + '</option>').join("") +
           (canAddChoice(ctx, f) ? '<option value="' + NEW + '">＋ Add new…</option>' : "") + '</select>';
+        break;
+      }
+      case "user": {
+        const users = (ctx.data().users || []);
+        input = '<select id="' + id + '" name="' + esc(f.name) + '"' + req + '><option value="">' + (f.required ? "Choose…" : "") + '</option>' +
+          users.map(u => '<option value="' + esc(u.id) + '"' + (u.id === v ? " selected" : "") + '>' + esc(u.name) + '</option>').join("") + '</select>';
         break;
       }
       case "choice":
@@ -168,7 +190,7 @@
       (opts.extraBody || "") +
       (row ? '<div class="meta rec-meta">' + esc(row[t.id]) + (row["Added By"] ? ' · added by ' + esc(userLabel(ctx, row["Added By"])) : "") +
         (row["Active"] === false ? ' · <b>turned off</b>' : "") + '</div>' : "") +
-      t.fields.map(f => fieldHtml(ctx, table, f, values[f.name], { hidden: hidden(f.name) })).join("") +
+      t.fields.map(f => fieldHtml(ctx, table, f, values[f.name], { hidden: hidden(f.name), readOnly: !editable })).join("") +
       (row && (canDel || admin || (t.kind === "list" && editable)) ? '<div class="danger-zone">' +
         (t.kind === "list" && editable ? '<button type="button" class="btn" data-rf="toggle">' + (row["Active"] === false ? "Turn back on" : "Turn off") + '</button>' : "") +
         (canDel ? '<button type="button" class="btn danger" data-rf="delete">' + (t.kind === "list" ? "Delete" : "Delete") + '</button>' : "") +
