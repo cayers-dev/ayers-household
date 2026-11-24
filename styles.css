@@ -815,3 +815,34 @@ body.syncing::before { content: ""; position: fixed; top: 0; left: 0; right: 0; 
 .hk-chip-x svg { width: 13px; height: 13px; }
 .hk-chip-x:hover, .hk-chip-x:focus-visible { filter: brightness(.92); }
 .hk-chipwrap.done .hk-chip-x { background: var(--surface-2); color: var(--muted); border-left-color: var(--border); }
+
+/* ---------- Shopping List ---------- */
+.sh-chips { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 10px; margin: 0 -2px; scrollbar-width: none; }
+.sh-chips::-webkit-scrollbar { display: none; }
+.sh-chip { flex: none; border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 999px;
+  padding: 7px 13px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.sh-chip span { color: var(--muted); font-weight: 500; margin-left: 2px; }
+.sh-chip.on { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+.sh-chip.on span { color: inherit; opacity: .8; }
+.sh-add { display: flex; gap: 8px; margin: 0 0 14px; }
+.sh-add input { flex: 1; min-width: 0; padding: 11px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-size: 16px; }
+.sh-add .btn { flex: none; }
+.sh-add .btn svg { width: 18px; height: 18px; }
+.sh-group { margin: 0 0 12px; }
+.sh-grouphead { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px 8px 9px; margin: 0 0 6px;
+  font-size: 15px; font-weight: 750; color: var(--text); background: var(--primary-soft); border-left: 4px solid var(--primary); border-radius: 8px; }
+.sh-grouphead span { color: var(--primary); font-weight: 700; }
+.sh-item { align-items: center; }
+.sh-item .body { cursor: pointer; }
+.sh-check { flex: none; width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--primary); background: transparent; cursor: pointer; padding: 0; }
+.sh-check:hover, .sh-check:focus-visible { background: var(--primary-soft); }
+.sh-check.off { border-color: var(--border); cursor: default; }
+.sh-item.urgent .sh-check { border-color: var(--danger); }
+.sh-qty { color: var(--muted); font-weight: 600; margin-left: 4px; }
+.sh-readd { display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; }
+.sh-readd svg { width: 15px; height: 15px; }
+.sh-undo { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--tabbar-h) + 76px + env(safe-area-inset-bottom, 0px)); z-index: 40;
+  display: flex; align-items: center; gap: 16px; background: var(--text); color: var(--bg); border-radius: 12px; padding: 10px 16px; box-shadow: var(--shadow);
+  max-width: calc(100% - 32px); }
+.sh-undo span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sh-undo .link-btn { color: var(--primary-soft); font-weight: 700; }

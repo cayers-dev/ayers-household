@@ -22,7 +22,7 @@
 // All module definitions, by key. (A function, not a top-level object, so
 // file load order in the Apps Script project never matters.)
 function modDefs_() {
-   return { hockey: hockeyDef_() };
+   return { hockey: hockeyDef_(), shopping: shoppingDef_() };
 }
 
 const MOD_SYSTEM_COLS = ["Added By", "Added At", "Updated By", "Updated At", "Deleted", "Deleted By", "Deleted At"];
@@ -280,7 +280,11 @@ function modAdd_(req, user) {
    modRequire_(user, def, t, "add", null, req.values || {});
    let values = modClean_(def, t, req.values || {}, user, null);
    t.fields.forEach(f => { if (values[f.name] === undefined && f.default !== undefined) values[f.name] = f.default; });
-   if (def.beforeSave) values = def.beforeSave(req.table, values, null, user, req) || values;
+   if (def.beforeSave) {
+      const r = def.beforeSave(req.table, values, null, user, req);
+      if (r && r.__result) return r.__result;   // the module handled it another way (e.g. added to an item already on the list)
+      values = r || values;
+   }
    modCheckRequired_(t, values);
    if (t.unique) modCheckUnique_(def, req.table, values, null);
    const id = modInsert_(def, req.table, values, user);
