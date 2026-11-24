@@ -64,7 +64,9 @@ function vehiclesDef_() {
                { name: "Oil Capacity", type: "text", hint: "e.g. 5.2 qt with filter" },
                { name: "Tire Pressure Front", type: "text", hint: "e.g. 36 psi" },
                { name: "Tire Pressure Rear", type: "text" },
-               { name: "Wiper Sizes", type: "text", hint: "Driver / passenger / rear" },
+               { name: "Wiper Driver", label: "Wiper size – driver", type: "text", hint: "e.g. 26\"" },
+               { name: "Wiper Passenger", label: "Wiper size – passenger", type: "text" },
+               { name: "Wiper Rear", label: "Wiper size – rear", type: "text" },
                { name: "Battery Install Date", label: "12V Battery Installed", type: "date" },
                { name: "Key Fob Battery", type: "text", hint: "e.g. CR2032" },
                { name: "Smog Due", type: "date" },
@@ -84,6 +86,13 @@ function vehiclesDef_() {
                { name: "Vehicle ID", label: "Vehicle", type: "ref", ref: "vehicles", required: true },
                { name: "Feature ID", label: "Feature", type: "ref", ref: "features", required: true },
                { name: "Value", type: "text", hint: "Only for value features (e.g. 255/45R20)" }
+            ] },
+         parts: { tab: "Parts", label: "Parts", id: "Part ID", prefix: "PRT-", kind: "record", area: "vehicles",
+            title: r => r["Part"],
+            fields: [
+               { name: "Vehicle ID", label: "Vehicle", type: "ref", ref: "vehicles", required: true },
+               { name: "Part", type: "list", list: "Part", required: true },
+               { name: "Info", type: "text", required: true, hint: "Part number, brand, size…" }
             ] },
          plates: { tab: "License Plates", label: "License Plates", id: "Plate ID", prefix: "PLT-", kind: "record", area: "vehicles",
             title: r => r["Plate"],
@@ -193,7 +202,7 @@ function vehiclesDef_() {
                { name: "Sort", type: "number" }
             ] }
       },
-      lists: ["Make", "Color", "Status", "Condition", "Purchase Type", "Fuel Type", "Drivetrain", "Plate Type", "Place Type", "Service Category"],
+      lists: ["Make", "Color", "Status", "Condition", "Purchase Type", "Fuel Type", "Drivetrain", "Plate Type", "Place Type", "Service Category", "Part"],
       beforeSave: vehBeforeSave_,
       afterSave: vehAfterSave_,
       afterDelete: vehAfterDelete_,
@@ -393,6 +402,7 @@ function vehiclesLoad_(req, user) {
       vehicles: modRows_(def, "vehicles"), lists: modRows_(def, "lists"), places: modRows_(def, "places"),
       features: modRows_(def, "features"), actions: modRows_(def, "actions"),
       vfeatures: see("vehicles") ? modRows_(def, "vfeatures") : [], plates: see("vehicles") ? modRows_(def, "plates") : [],
+      parts: see("vehicles") ? modRows_(def, "parts") : [],
       visits: [], lines: [], odometer: [], intervals: [], policies: [], cards: [], registrations: [],
       status: {}, current: {}, today: vehToday_()
    };
@@ -648,7 +658,8 @@ const VEH_SEED = {
       "Drivetrain": ["4WD", "AWD", "FWD", "RWD"],
       "Plate Type": ["Standard", "Personalized", "Temporary"],
       "Place Type": ["Dealership", "Service Shop", "Insurance Carrier", "DMV / Smog"],
-      "Service Category": ["Maintenance", "Tires", "Repair", "Inspection", "Detail/Wash", "Recall"]
+      "Service Category": ["Maintenance", "Tires", "Repair", "Inspection", "Detail/Wash", "Recall"],
+      "Part": ["Cabin Air Filter", "Engine Air Filter", "Oil Filter", "Spark Plugs", "Brake Pads – Front", "Brake Pads – Rear", "Tires", "12V Battery", "Headlight Bulbs"]
    },
    actions: {
       "Maintenance": ["Oil Change", "Tire Rotation", "Air Filter", "Cabin Filter", "Wiper Blades", "Brake Fluid", "Coolant", "Transmission Fluid", "Spark Plugs", "Battery"],
@@ -748,6 +759,27 @@ function vehiclesSetup() {
    SpreadsheetApp.flush();
    console.log("Vehicles setup done | " + out.join(" | "));
    return out.join(" | ");
+}
+
+// One-time update to the answers of 11/24 (safe to run again): Parts tab and its Part dropdown,
+// and separate wiper size columns (driver, passenger, rear). The old Wiper Sizes column was never used.
+function vehiclesUpgrade() {
+   CORE_GRID = {}; MOD_SS = {}; MOD_ROWS = {};
+   const def = vehiclesDef_();
+   modBuildTabs_(def);
+   const owner = coreGetUsers_(true).find(u => u.id === "USR-1") || coreGetUsers_(true).find(u => u.admin);
+   const have = modRows_(def, "lists", true).filter(r => r["List"] === "Part").map(r => String(r["Value"]).toLowerCase());
+   const add = VEH_SEED.lists["Part"].filter(v => have.indexOf(v.toLowerCase()) === -1).map(v => ({ "List": "Part", "Value": v, "Sort": "" }));
+   if (add.length) modBulkInsert_(def, "lists", add, owner);
+   const sheet = modSs_("vehicles").getSheetByName("Vehicles");
+   const hdr = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String);
+   const old = hdr.indexOf("Wiper Sizes") + 1;
+   let removed = "kept";
+   if (old && sheet.getLastRow() > 1 && sheet.getRange(2, old, sheet.getLastRow() - 1, 1).getValues().every(r => String(r[0]).trim() === "")) { sheet.deleteColumn(old); removed = "removed (it was empty)"; }
+   SpreadsheetApp.flush();
+   const out = "Parts tab ready · Part values added: " + add.length + " · old Wiper Sizes column " + (old ? removed : "not there");
+   console.log(out);
+   return out;
 }
 
 // Module-level Vehicles roles from VEH_SEED.access (area rows for Vehicles are left as they are).

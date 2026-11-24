@@ -929,3 +929,14 @@ img.thumb[data-file-id] { cursor: pointer; }
 .vh-feat-edit .vh-feat-val { grid-column: 1 / -1; margin: 0; }
 @media (max-width: 420px) { .vh-feat-edit { grid-template-columns: 1fr; } }
 .vh-fu-row a.body { text-decoration: none; color: inherit; }
+.vh-tiles { margin: 0 0 4px; }
+.vh-cl { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.vh-cl .vh-cl-v { font-weight: 700; }
+.vh-cl .vh-cl-d { font-variant-numeric: tabular-nums; }
+.vh-cl .vh-cl-d, .vh-cl .vh-cl-p, .vh-cl .vh-cl-e { color: var(--muted); font-size: 14px; }
+.vh-cardcap.vh-cl .vh-cl-d { color: var(--text); }
+.vh-wrap { white-space: normal !important; }
+.file-reset { font-size: 14px; }
+.vh-fu input[type="text"] { flex-basis: 100%; }
+.vh-fu-date { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
+.vh-fu-date input { width: auto; }

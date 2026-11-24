@@ -39,6 +39,10 @@
   const see = area => M.can(ctx, area, "view");
   const plateNow = id => rows("plates").filter(p => p["Vehicle ID"] === id && !p["End Date"]).sort((a, b) => String(b["Start Date"]).localeCompare(String(a["Start Date"])))[0];
   const policyOf = card => card ? byId("policies", card["Policy ID"]) : null;
+  const mdy = iso => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || "")); return m ? m[2] + "/" + m[3] + "/" + m[1].slice(2) : ""; };
+  // Insurance card label: vehicle (bold) / from – to (mm/dd/yy) / provider, policy number.
+  const cardLabel = (p, v) => '<b class="vh-cl-v">' + esc(vName(v)) + '</b><span class="vh-cl-d">' + esc(mdy(p["Start Date"]) + " – " + mdy(p["End Date"])) + '</span>' +
+    '<span class="vh-cl-p">' + esc([placeName(p["Carrier"]), p["Policy Number"]].filter(Boolean).join(", ")) + '</span>';
   const currentCard = vid => { const id = (D().current || {})[vid]; return id ? byId("cards", id) : null; };
 
   async function load(silent) {
@@ -80,7 +84,7 @@
         default: return ctx.refLabel(t, r);
       }
     },
-    singular: t => ({ vehicles: "vehicle", places: "place", features: "feature", actions: "action", plates: "license plate", odometer: "odometer reading",
+    singular: t => ({ parts: "part", vehicles: "vehicle", places: "place", features: "feature", actions: "action", plates: "license plate", odometer: "odometer reading",
       intervals: "interval", registrations: "registration", cards: "insurance card", policies: "policy", lists: "list value" }[t] || "entry"),
     onFormReady: (t, form) => {
       if (t !== "vehicles") return;
@@ -121,10 +125,9 @@
     const cats = listVals("Service Category");
     const acts = rows("actions").filter(a => a["Active"] !== false && (!l["Category"] || a["Category"] === l["Category"]) || a["Action ID"] === l["Action ID"])
       .sort((a, b) => a["Action"].localeCompare(b["Action"]));
-    const fu = !!(l["Follow Up"] || l["Follow Up Date"]);
     if (kind !== "Service") {
       return '<div class="vh-line vh-extra" data-i="' + i + '" data-kind="' + esc(kind) + '"' + (l["Line ID"] ? ' data-id="' + esc(l["Line ID"]) + '"' : "") + '>' +
-        '<div class="vh-line-k">' + esc(kind) + '</div><input type="text" data-l="Description" placeholder="Note" value="' + esc(l["Description"] || "") + '" aria-label="' + esc(kind) + ' note">' +
+        '<div class="vh-line-k">' + esc(kind) + '</div>' +
         '<div class="suffix-wrap money-wrap"><span class="prefix">$</span><input type="number" step="0.01" inputmode="decimal" data-l="Cost" value="' + esc(l["Cost"] === undefined ? "" : l["Cost"]) + '" aria-label="' + esc(kind) + ' amount"></div>' +
         '<button type="button" class="icon-btn vh-line-x" data-vl="remove" aria-label="Remove ' + esc(kind) + ' line">' + ICONS.close + '</button></div>';
     }
@@ -134,9 +137,8 @@
       '<button type="button" class="icon-btn vh-line-x" data-vl="remove" aria-label="Remove line">' + ICONS.close + '</button></div>' +
       '<div class="vh-line-mid"><input type="text" data-l="Description" placeholder="Details (optional)" value="' + esc(l["Description"] || "") + '" aria-label="Details">' +
       '<div class="suffix-wrap money-wrap"><span class="prefix">$</span><input type="number" step="0.01" inputmode="decimal" data-l="Cost" value="' + esc(l["Cost"] === undefined ? "" : l["Cost"]) + '" aria-label="Cost"></div></div>' +
-      '<label class="check vh-fu-toggle"><input type="checkbox" data-vl="fu"' + (fu ? " checked" : "") + '> Follow up</label>' +
-      '<div class="vh-fu"' + (fu ? "" : " hidden") + '><input type="text" data-l="Follow Up" placeholder="What to do next" value="' + esc(l["Follow Up"] || "") + '" aria-label="Follow up">' +
-      '<input type="date" data-l="Follow Up Date" value="' + esc(l["Follow Up Date"] || "") + '" aria-label="Follow-up date">' +
+      '<div class="vh-fu"><input type="text" data-l="Follow Up" placeholder="Follow-up (optional)" value="' + esc(l["Follow Up"] || "") + '" aria-label="Follow up">' +
+      '<label class="vh-fu-date">Follow-up date <input type="date" data-l="Follow Up Date" value="' + esc(l["Follow Up Date"] || "") + '"></label>' +
       (l["Line ID"] ? '<label class="check"><input type="checkbox" data-l="Follow Up Done"' + (l["Follow Up Done"] === true ? " checked" : "") + '> Done</label>' : "") + '</div></div>';
   }
   function readLines(form) {
@@ -144,8 +146,6 @@
       const o = { "Kind": el.dataset.kind };
       if (el.dataset.id) o.id = el.dataset.id;
       $$("[data-l]", el).forEach(i => { o[i.dataset.l] = i.type === "checkbox" ? i.checked : i.value; });
-      const fuOn = el.querySelector('[data-vl="fu"]');
-      if (fuOn && !fuOn.checked) { o["Follow Up"] = ""; o["Follow Up Date"] = ""; }
       return o;
     });
   }
@@ -167,7 +167,7 @@
       (!lines.some(l => l["Kind"] === "Tax") ? '<button type="button" class="link-btn" data-vl="tax">+ Tax</button>' : "") +
       (!lines.some(l => l["Kind"] === "Shipping") ? '<button type="button" class="link-btn" data-vl="ship">+ Shipping</button>' : "") +
       '<span class="vh-total">Total <b>$0.00</b></span></div>' +
-      '<div class="hint">Tax and Shipping lines with no amount are left off.</div></div>' +
+      '<div class="hint">Tax and Shipping lines with no amount are left off. A follow-up date shows in Due Soon (and goes to the task list once Tasks is set up).</div></div>' +
       M.fieldHtml(ctx, "visits", t.fields.find(f => f.name === "Receipt"), values["Receipt"], {}) +
       M.fieldHtml(ctx, "visits", t.fields.find(f => f.name === "Notes"), values["Notes"], {}) +
       (row && (can("visits", "delete", row) || C.isAdmin()) ? '<div class="danger-zone">' + (can("visits", "delete", row) ? '<button type="button" class="btn danger" data-vl="delete">Delete visit</button>' : "") + '</div>' : "");
@@ -185,7 +185,6 @@
         form.addEventListener("input", total);
         form.addEventListener("change", e => {
           const el = e.target;
-          if (el.matches('[data-vl="fu"]')) { const fu = el.closest(".vh-line").querySelector(".vh-fu"); fu.hidden = !el.checked; if (el.checked) fu.querySelector("input").focus(); }
           if (el.matches('select[data-l="Category"]')) { redraw(); const i = +el.closest(".vh-line").dataset.i; const a = byId("actions", lines[i]["Action ID"]); if (a && a["Category"] !== lines[i]["Category"]) lines[i]["Action ID"] = ""; refill(); }
           if (el.matches('select[data-l="Action ID"]')) { redraw(); const i = +el.closest(".vh-line").dataset.i; const a = byId("actions", lines[i]["Action ID"]); if (a && !lines[i]["Category"]) { lines[i]["Category"] = a["Category"]; refill(); } }
         });
@@ -224,14 +223,13 @@
     const body = t.fields.map(f => M.fieldHtml(ctx, "policies", f, f.name === "Start Date" ? M.isoDay(new Date()) : undefined, {})).join("") +
       '<div class="field"><label>Vehicles on this policy <span class="req">*</span></label><div class="vh-polveh">' + vs.map(v =>
         '<div class="vh-polrow"><label class="check"><input type="checkbox" data-pv="' + esc(v["Vehicle ID"]) + '"' + (!vid || v["Vehicle ID"] === vid ? " checked" : "") + '> ' + esc(vLabel(v)) + '</label>' +
-        '<label class="btn file-btn"><input type="file" accept="image/*,application/pdf" data-pvfile="' + esc(v["Vehicle ID"]) + '"> Card</label><span class="file-picked"></span></div>').join("") + '</div>' +
+        M.filePicker(v["Vehicle ID"], "Card image") + '</div>').join("") + '</div>' +
       '<div class="hint">Each vehicle gets its own card; add each card’s image here or later.</div></div>';
     let formEl;
     C.openSheet({
       title: "Add insurance policy", body: body, submitLabel: "Add",
       onReady: form => {
-        formEl = form; M.wireAddNew(ctx, "policies", form);
-        $$("input[data-pvfile]", form).forEach(i => i.addEventListener("change", () => { i.closest(".vh-polrow").querySelector(".file-picked").textContent = i.files[0] ? i.files[0].name : ""; }));
+        formEl = form; M.wireAddNew(ctx, "policies", form); M.wireFiles(ctx, form, null);
       },
       onSubmit: async v => {
         const values = {};
@@ -239,7 +237,7 @@
         const ids = $$("input[data-pv]", formEl).filter(i => i.checked).map(i => i.dataset.pv);
         if (!ids.length) throw new Error("Pick at least one vehicle.");
         const files = {};
-        $$("input[data-pvfile]", formEl).forEach(i => { if (i.files && i.files[0]) files[i.dataset.pvfile] = i.files[0]; });
+        M.pickedFiles(formEl).forEach(p => { files[p.field] = p.files; });
         const res = await ctx.save("vehicles.addPolicy", { values: values, vehicles: ids }, "Policy added");
         if (!res) return false;
         for (let k = 0; k < ids.length; k++) {
@@ -288,7 +286,12 @@
         '<div class="body"><div class="title">' + esc(vName(v)) + '</div><div class="sub">' + esc(sub) + '</div></div>' +
         (nd && nd.state === "overdue" ? '<span class="pill vh-over">Overdue</span>' : nd && nd.state === "soon" ? '<span class="pill vh-soon">Due soon</span>' : "") + '</a>';
     };
-    const ins = see("insurance") ? '<a class="btn primary vh-cards-btn" href="#/vehicles/cards">' + IC.card + ' Insurance cards</a>' : "";
+    const tileBtn = (attrs, icon, label, info, cls) => '<a class="home-link ' + (cls || "") + '" ' + attrs + '><span class="home-icon">' + icon + '</span><span class="home-text"><span class="home-label">' + esc(label) + '</span>' +
+      (info ? '<span class="home-info">' + esc(info) + '</span>' : "") + '</span></a>';
+    const nCur = Object.keys(D().current || {}).filter(k => { const v = vehicle(k); return v && !sold(v); }).length;
+    const tiles = (see("insurance") ? tileBtn('href="#/vehicles/cards"', IC.card, "Insurance cards", plural(nCur, "current card"), "vh-cards-btn") : "") +
+      (can("visits", "add") ? tileBtn('href="#/vehicles" role="button" data-vh="new-visit"', IC.wrench, "Service entry", "Log a service visit") : "");
+    const ins = tiles ? '<div class="home-grid vh-tiles">' + tiles + '</div>' : "";
     const add = can("vehicles", "add") ? '<button class="btn" data-mod-add="vehicles">' + ICONS.plus + 'Add vehicle</button>' : "";
     const fus = see("service") ? openFollowUps() : [];
     const fuHtml = fus.length ? section("Follow-ups", '<div class="card list">' + fus.map(f => {
@@ -301,11 +304,11 @@
       ["#/vehicles/places", "Places", "Dealerships, shops, insurance carriers, DMV / smog", "vehicles"],
       ["#/vehicles/features", "Features", "Heated seats, tire size…", "vehicles"],
       ["#/vehicles/actions", "Service categories & actions", "", "service"],
-      ["#/vehicles/lists", "Dropdown lists", "Make, color, status, fuel…", "vehicles"]
+      ["#/vehicles/lists", "Dropdown lists", "Make, color, status, fuel, parts…", "vehicles"]
     ].filter(l => see(l[3])).map(l => '<a class="list-item" href="' + l[0] + '"><span class="thumb">' + IC.tag + '</span><div class="body"><div class="title">' + esc(l[1]) + '</div>' +
       (l[2] ? '<div class="sub">' + esc(l[2]) + '</div>' : "") + '</div><span class="thumb">' + ICONS.next + '</span></a>').join("");
-    const html = (ins || add ? '<div class="actions vh-top">' + ins + add + '</div>' : "") +
-      section("Vehicles", '<div class="card list">' + (active.map(vRow).join("") || '<div class="empty">No vehicles yet.</div>') + '</div>') +
+    const html = ins +
+      section("Vehicles", '<div class="card list">' + (active.map(vRow).join("") || '<div class="empty">No vehicles yet.</div>') + '</div>', add ? add.replace('class="btn"', 'class="link-btn"').replace(ICONS.plus, "+ ") : "") +
       fuHtml +
       (gone.length ? section("Sold", '<div class="card list">' + gone.map(vRow).join("") + '</div>') : "") +
       (links ? section("Lists & settings", '<div class="card list">' + links + '</div>') : "") +
@@ -348,7 +351,7 @@
       ["Condition", v["Condition"]], ["Purchase type", v["Purchase Type"]], ["Lienholder", v["Lienholder"]], ["Lease ends", fmt("Lease End Date")], ["Lease miles / yr", v["Lease Miles Per Year"] ? Number(v["Lease Miles Per Year"]).toLocaleString() : ""],
       ["Sold", fmt("Sold Date")], ["Sold for", fmt("Sold Amount")], ["Sold to", v["Sold To"]]]);
     const specs = kv([["Oil", [v["Oil Type"], v["Oil Capacity"]].filter(Boolean).join(", ")], ["Tire pressure", [v["Tire Pressure Front"] ? "Front " + v["Tire Pressure Front"] : "", v["Tire Pressure Rear"] ? "Rear " + v["Tire Pressure Rear"] : ""].filter(Boolean).join(" · ")],
-      ["Wipers", v["Wiper Sizes"]], ["12V battery", fmt("Battery Install Date")], ["Key fob battery", v["Key Fob Battery"]], ["Smog due", fmt("Smog Due")]]);
+      ["Wipers", [v["Wiper Driver"] ? "Driver " + v["Wiper Driver"] : "", v["Wiper Passenger"] ? "Passenger " + v["Wiper Passenger"] : "", v["Wiper Rear"] ? "Rear " + v["Wiper Rear"] : ""].filter(Boolean).join(" · ")], ["12V battery", fmt("Battery Install Date")], ["Key fob battery", v["Key Fob Battery"]], ["Smog due", fmt("Smog Due")]]);
     const feats = rows("vfeatures").filter(f => f["Vehicle ID"] === vid).map(f => { const x = featureOf(f["Feature ID"]); return x ? { name: x["Feature"], value: f["Value"] } : null; })
       .filter(Boolean).sort((a, b) => a.name.localeCompare(b.name));
     const featHtml = '<div class="card">' + (feats.length ? '<div class="vh-feats">' + feats.map(f => '<span class="pill">' + esc(f.name) + (f.value ? ": " + esc(f.value) : "") + '</span>').join("") + '</div>' : '<div class="empty">No features listed.</div>') + '</div>';
@@ -359,8 +362,15 @@
     return (edit ? '<div class="actions" style="margin:0 0 4px">' + edit + '</div>' : "") +
       (basics ? section("Basics", basics) : "") + (buy ? section("Purchase", buy) : "") + (specs ? section("Specs", specs) : "") +
       section("Features", featHtml, can("vehicles", "edit", v) ? '<button class="link-btn" data-vh="features" data-id="' + esc(vid) + '">Edit</button>' : "") +
+      section("Parts", partsHtml(vid), can("parts", "add") ? '<button class="link-btn" data-vh="add-part" data-id="' + esc(vid) + '">+ Add</button>' : "") +
       section("License plates", plateHtml, can("plates", "add") ? '<button class="link-btn" data-vh="add-plate" data-id="' + esc(vid) + '">+ Add</button>' : "") +
       (v["Notes"] ? section("Notes", '<div class="card"><div class="vh-notes">' + esc(v["Notes"]) + '</div></div>') : "");
+  }
+
+  function partsHtml(vid) {
+    const ps = rows("parts").filter(p => p["Vehicle ID"] === vid).sort((a, b) => String(a["Part"]).localeCompare(String(b["Part"])));
+    return '<div class="card list">' + (ps.map(p => '<div class="list-item" role="button" tabindex="0" data-mod-edit="parts" data-id="' + esc(p["Part ID"]) + '"><div class="body"><div class="title">' + esc(p["Part"]) + '</div>' +
+      '<div class="sub vh-wrap">' + esc(p["Info"]) + '</div></div></div>').join("") || '<div class="empty">No parts listed.</div>') + '</div>';
   }
 
   function vehService(v) {
@@ -399,15 +409,17 @@
     const cards = rows("cards").filter(c => c["Vehicle ID"] === vid).map(c => ({ c: c, p: policyOf(c) })).filter(x => x.p)
       .sort((a, b) => String(b.p["Start Date"]).localeCompare(String(a.p["Start Date"])));
     const cardRow = x => '<a class="list-item" href="#/vehicles/card/' + encodeURIComponent(x.c["Card ID"]) + '">' + (x.c["Card"] ? M.fileHtml(ctx, x.c["Card"], "thumb") : '<span class="thumb">' + IC.card + '</span>') +
-      '<div class="body"><div class="title">' + esc(placeName(x.p["Carrier"]) + " · " + x.p["Policy Number"]) + '</div><div class="sub">' + esc(day(x.p["Start Date"]) + " – " + day(x.p["End Date"])) + '</div></div>' +
+      '<div class="body vh-cl">' + cardLabel(x.p, v) + '</div>' +
       (x.c === cur ? '<span class="pill vh-ok">Current</span>' : x.p["End Date"] < today ? '<span class="pill">Expired</span>' : x.p["Start Date"] > today ? '<span class="pill">Upcoming</span>' : "") + '</a>';
-    const regs = rows("registrations").filter(r => r["Vehicle ID"] === vid).sort((a, b) => String(b["Expires"]).localeCompare(String(a["Expires"])));
+    const allRegs = rows("registrations").filter(r => r["Vehicle ID"] === vid).sort((a, b) => String(b["Expires"]).localeCompare(String(a["Expires"])));
+    const regs = vh.pastRegs ? allRegs : allRegs.slice(0, 1);
     const regRow = r => '<div class="list-item" role="button" tabindex="0" data-mod-edit="registrations" data-id="' + esc(r["Registration ID"]) + '">' + (r["Card"] ? M.fileHtml(ctx, r["Card"], "thumb") : '<span class="thumb">' + IC.flag + '</span>') +
       '<div class="body"><div class="title">Expires ' + esc(day(r["Expires"])) + '</div><div class="sub">' + esc([r["Fee"] !== "" ? M.money(r["Fee"]) : "", r["Paid Date"] ? "Paid " + day(r["Paid Date"]) : ""].filter(Boolean).join(" · ")) + '</div></div>' +
       (r["Expires"] < today ? '<span class="pill vh-over">Expired</span>' : "") + '</div>';
     return section("Insurance cards", '<div class="card list">' + (cards.map(cardRow).join("") || '<div class="empty">No insurance cards yet.</div>') + '</div>',
         can("policies", "add") ? '<button class="link-btn" data-vh="add-policy" data-id="' + esc(vid) + '">+ Policy</button>' : "") +
-      section("Registration", '<div class="card list">' + (regs.map(regRow).join("") || '<div class="empty">No registrations yet.</div>') + '</div>',
+      section("Registration", '<div class="card list">' + (regs.map(regRow).join("") || '<div class="empty">No registrations yet.</div>') + '</div>' +
+        (allRegs.length > 1 ? '<label class="check vh-pasttoggle"><input type="checkbox" data-vh="pastregs"' + (vh.pastRegs ? " checked" : "") + '> Show past registrations (' + (allRegs.length - 1) + ')</label>' : ""),
         can("registrations", "add") ? '<button class="link-btn" data-vh="add-reg" data-id="' + esc(vid) + '">+ Add</button>' : "");
   }
 
@@ -436,7 +448,7 @@
     const all = rows("cards").map(c => ({ c: c, p: policyOf(c), v: vehicle(c["Vehicle ID"]) })).filter(x => x.p && x.v);
     const tile = x => '<a class="card vh-cardtile" href="#/vehicles/card/' + encodeURIComponent(x.c["Card ID"]) + '">' +
       (x.c["Card"] ? M.fileHtml(ctx, x.c["Card"], "vh-cardimg") : '<div class="vh-cardimg vh-noimg">' + IC.card + '<span>No image yet</span></div>') +
-      '<div class="vh-cardcap"><b>' + esc(vName(x.v)) + '</b><span>' + esc(placeName(x.p["Carrier"]) + " · " + x.p["Policy Number"] + " · until " + day(x.p["End Date"])) + '</span></div></a>';
+      '<div class="vh-cardcap vh-cl">' + cardLabel(x.p, x.v) + '</div></a>';
     const current = all.filter(x => curIds.indexOf(x.c["Card ID"]) !== -1 && !sold(x.v)).sort((a, b) => vName(a.v).localeCompare(vName(b.v)));
     const noCard = rows("vehicles").filter(v => !sold(v) && !(D().current || {})[v["Vehicle ID"]]);
     let past = all.filter(x => curIds.indexOf(x.c["Card ID"]) === -1);
@@ -446,7 +458,7 @@
     past.sort((a, b) => entry(b).localeCompare(entry(a)));
     const pastHtml = vh.showPast ? '<div class="vh-filter"><label>Entered from <input type="date" data-vh="from" value="' + esc(vh.from) + '"></label><label>to <input type="date" data-vh="to" value="' + esc(vh.to) + '"></label></div>' +
       '<div class="card list">' + (past.map(x => '<a class="list-item" href="#/vehicles/card/' + encodeURIComponent(x.c["Card ID"]) + '">' + (x.c["Card"] ? M.fileHtml(ctx, x.c["Card"], "thumb") : '<span class="thumb">' + IC.card + '</span>') +
-        '<div class="body"><div class="title">' + esc(vName(x.v)) + '</div><div class="sub">' + esc(placeName(x.p["Carrier"]) + " · " + day(x.p["Start Date"]) + " – " + day(x.p["End Date"]) + " · entered " + day(entry(x))) + '</div></div>' +
+        '<div class="body vh-cl">' + cardLabel(x.p, x.v) + '<span class="vh-cl-e">Entered ' + esc(mdy(entry(x))) + '</span></div>' +
         (x.p["End Date"] < today ? '<span class="pill">Expired</span>' : '<span class="pill">Upcoming</span>') + '</a>').join("") || '<div class="empty">No past cards' + (vh.from || vh.to ? " entered in those dates" : "") + '.</div>') + '</div>' : "";
     const html = (can("policies", "add") ? '<div class="actions" style="margin:0 0 8px"><button class="btn" data-vh="add-policy">' + ICONS.plus + 'Add policy</button></div>' : "") +
       (current.length ? '<div class="vh-cardgrid">' + current.map(tile).join("") + '</div>' : '<div class="card"><div class="empty">No current insurance cards.</div></div>') +
@@ -471,7 +483,7 @@
   }
 
   function viewLists() {
-    const names = ["Make", "Color", "Status", "Condition", "Purchase Type", "Fuel Type", "Drivetrain", "Plate Type", "Place Type"];
+    const names = ["Make", "Color", "Status", "Condition", "Purchase Type", "Fuel Type", "Drivetrain", "Plate Type", "Place Type", "Part"];
     return { title: "Dropdown lists", back: true, html: '<div class="card list">' + names.map(n => '<a class="list-item" href="#/vehicles/list/' + encodeURIComponent(n) + '"><span class="thumb">' + IC.tag + '</span><div class="body"><div class="title">' + esc(n) + '</div>' +
       '<div class="sub">' + esc(listVals(n).join(", ") || "Empty") + '</div></div><span class="thumb">' + ICONS.next + '</span></a>').join("") + '</div>' };
   }
@@ -523,6 +535,8 @@
       case "retry": vh.error = ""; C.render(); break;
       case "tab": location.replace(d.to); break;
       case "features": featuresForm(d.id); break;
+      case "new-visit": e.preventDefault(); visitForm("", {}); break;
+      case "add-part": M.recordForm(ctx, "parts", "", { prefill: { "Vehicle ID": d.id }, hide: ["Vehicle ID"], title: "Add part info" }); break;
       case "add-plate": M.recordForm(ctx, "plates", "", { prefill: { "Vehicle ID": d.id, "Start Date": today() }, hide: ["Vehicle ID"] }); break;
       case "add-odo": M.recordForm(ctx, "odometer", "", { prefill: { "Vehicle ID": d.id, "Date": today() }, hide: ["Vehicle ID"], title: "Log odometer" }); break;
       case "add-interval": M.recordForm(ctx, "intervals", "", { prefill: { "Vehicle ID": d.id }, hide: ["Vehicle ID"] }); break;
@@ -546,6 +560,7 @@
     const t = e.target;
     if (!t || !t.matches || C.parseRoute().name !== "vehicles") return;
     if (t.matches("[data-vh='past']")) { vh.showPast = t.checked; C.render(); }
+    if (t.matches("[data-vh='pastregs']")) { vh.pastRegs = t.checked; C.render(); }
     if (t.matches("[data-vh='from']")) { vh.from = t.value; C.render(); }
     if (t.matches("[data-vh='to']")) { vh.to = t.value; C.render(); }
   });

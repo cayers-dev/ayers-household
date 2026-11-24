@@ -101,11 +101,9 @@
     if (f.type === "file") {
       const ro = f.readOnly || opts.readOnly;
       if (ro && !v) return "";
-      return '<div class="field file-field" data-file-field="' + esc(f.name) + '"><label>' + label + '</label>' +
+      return '<div class="field file-field"><label>' + label + '</label>' +
         (v ? '<div class="file-current">' + fileHtml(ctx, v, "file-thumb") + '</div>' : "") +
-        (ro ? "" : '<div class="file-actions"><label class="btn file-btn"><input type="file" accept="image/*,application/pdf" data-file-input="' + esc(f.name) + '"> ' +
-          (v ? "Replace" : "Add photo or file") + '</label>' +
-          (v ? '<button type="button" class="link-btn" data-file-clear="' + esc(f.name) + '">Remove</button>' : "") + '<span class="file-picked"></span></div>') +
+        (ro ? "" : filePicker(f.name, v ? "Replace" : "Add photo or file", v ? '<button type="button" class="link-btn" data-file-clear="' + esc(f.name) + '">Remove</button>' : "")) +
         (ro ? "" : hint) + '</div>';
     }
     if (f.readOnly || opts.readOnly) {
@@ -240,31 +238,83 @@
         const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
         const g = cv.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, w, h); g.drawImage(img, 0, 0, w, h);
         URL.revokeObjectURL(url);
-        resolve({ data: cv.toDataURL("image/jpeg", 0.82).split(",")[1], mimeType: "image/jpeg", name: file.name });
+        resolve({ data: cv.toDataURL("image/jpeg", 0.82).split(",")[1], mimeType: "image/jpeg", name: file.name, w: w, h: h });
       };
       img.onerror = () => { URL.revokeObjectURL(url); asIs(); };
       img.src = url;
     });
   }
-  async function uploadFile(ctx, table, id, field, file) {
-    const f = await prepareFile(file);
+  // Several photos -> one PDF, a page per photo in the order they were taken or picked.
+  async function photosToPdf(files) {
+    const pages = [];
+    for (const f of files) {
+      const p = await prepareFile(f);
+      if (p.mimeType !== "image/jpeg" || !p.w) throw new Error("Only photos can be joined into one PDF. Pick photos only, or one PDF on its own.");
+      const bin = atob(p.data), bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      pages.push({ bytes: bytes, w: p.w, h: p.h });
+    }
+    const te = new TextEncoder(), parts = [], offsets = [];
+    let len = 0;
+    const put = x => { const b = typeof x === "string" ? te.encode(x) : x; parts.push(b); len += b.length; };
+    const obj = (n, body) => { offsets[n] = len; put(n + " 0 obj\n"); body(); put("\nendobj\n"); };
+    const n = pages.length;
+    put("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n".replace(/[\u0080-ÿ]/g, "x"));
+    obj(1, () => put("<< /Type /Catalog /Pages 2 0 R >>"));
+    obj(2, () => put("<< /Type /Pages /Count " + n + " /Kids [" + pages.map((_, i) => (3 + i * 3) + " 0 R").join(" ") + "] >>"));
+    pages.forEach((pg, i) => {
+      const id = 3 + i * 3, W = 612, H = Math.round(612 * pg.h / pg.w);
+      const content = "q " + W + " 0 0 " + H + " 0 0 cm /Im" + i + " Do Q";
+      obj(id, () => put("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 " + W + " " + H + "] /Resources << /XObject << /Im" + i + " " + (id + 1) + " 0 R >> >> /Contents " + (id + 2) + " 0 R >>"));
+      obj(id + 1, () => { put("<< /Type /XObject /Subtype /Image /Width " + pg.w + " /Height " + pg.h + " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length " + pg.bytes.length + " >>\nstream\n"); put(pg.bytes); put("\nendstream"); });
+      obj(id + 2, () => put("<< /Length " + content.length + " >>\nstream\n" + content + "\nendstream"));
+    });
+    const total = 3 + n * 3, xref = len;
+    put("xref\n0 " + total + "\n0000000000 65535 f \n" + offsets.slice(1, total).map(o => String(o).padStart(10, "0") + " 00000 n \n").join(""));
+    put("trailer\n<< /Size " + total + " /Root 1 0 R >>\nstartxref\n" + xref + "\n%%EOF");
+    const all = new Uint8Array(len); let at = 0;
+    parts.forEach(b => { all.set(b, at); at += b.length; });
+    let s2 = ""; for (let i = 0; i < all.length; i += 0x8000) s2 += String.fromCharCode.apply(null, all.subarray(i, i + 0x8000));
+    return { data: btoa(s2), mimeType: "application/pdf", name: "pages.pdf", pages: n };
+  }
+  // files: one File (photo or PDF) or several photos (joined into one PDF).
+  async function uploadFile(ctx, table, id, field, files) {
+    files = Array.isArray(files) ? files : [files];
+    const f = files.length > 1 ? await photosToPdf(files) : await prepareFile(files[0]);
     C.busy(true);
     try {
       const r = await C.api(ctx.key + ".upload", { module: ctx.key, table: table, id: id, field: field, file: f, reload: true });
       if (r.moduleData && ctx.applyData) ctx.applyData(r.moduleData);
-      toast("File saved");
+      toast(files.length > 1 ? "Saved as one PDF (" + files.length + " pages)" : "File saved");
       C.render();
       return r;
     } finally { C.busy(false); }
   }
+  // A picker: "Add photo or file" (several at once is fine), then "+ Add page" for more (camera: one photo per tap).
+  function filePicker(key, label, extra) {
+    return '<div class="file-actions file-pick" data-file-key="' + esc(key) + '"><label class="btn file-btn"><input type="file" accept="image/*,application/pdf" multiple data-file-input="' + esc(key) + '"> <span class="file-btn-l">' + esc(label) + '</span></label>' +
+      (extra || "") + '<span class="file-picked"></span><button type="button" class="link-btn file-reset" hidden>Clear</button></div>';
+  }
   function pickedFiles(form) {
-    return form ? $$("input[data-file-input]", form).filter(i => i.files && i.files[0]).map(i => ({ field: i.dataset.fileInput, file: i.files[0] })) : [];
+    return form ? $$(".file-pick", form).filter(p => p._files && p._files.length).map(p => ({ field: p.dataset.fileKey, file: p._files, files: p._files })) : [];
   }
   function wireFiles(ctx, form, rec) {
-    $$("input[data-file-input]", form).forEach(i => i.addEventListener("change", () => {
-      const s = i.closest(".file-actions").querySelector(".file-picked");
-      if (s) s.textContent = i.files && i.files[0] ? i.files[0].name + " (saved with the form)" : "";
-    }));
+    $$(".file-pick", form).forEach(p => {
+      const show = () => {
+        const n = (p._files || []).length, s = p.querySelector(".file-picked"), l = p.querySelector(".file-btn-l");
+        s.textContent = !n ? "" : n === 1 ? p._files[0].name + " (saved with the form)" : n + " pages – saved as one PDF";
+        p.querySelector(".file-reset").hidden = !n;
+        if (n) l.textContent = "+ Add page";
+      };
+      p.addEventListener("change", e => {
+        const i = e.target;
+        if (!i.matches("input[type=file]") || !i.files || !i.files.length) return;
+        p._files = (p._files || []).concat(Array.from(i.files));
+        i.value = "";
+        show();
+      });
+      p.querySelector(".file-reset").addEventListener("click", () => { p._files = []; show(); p.querySelector(".file-btn-l").textContent = "Add photo or file"; });
+    });
     $$("[data-file-clear]", form).forEach(b => b.addEventListener("click", async () => {
       if (!rec) return;
       if (!(await confirmSheet({ title: "Remove file?", message: "The file is unlinked here. It stays in the Vehicles folder in Drive.", submitLabel: "Remove", danger: true }))) return;
@@ -465,6 +515,6 @@
     userName: userName, userLabel: userLabel,
     can: can, tableCan: tableCan, fieldHtml: fieldHtml, recordForm: recordForm, confirmSheet: confirmSheet, chooseSheet: chooseSheet,
     listView: listView, deletedView: deletedView, clearDeleted: key => { delete deletedCache[key]; },
-    fileHtml: fileHtml, uploadFile: uploadFile, pickedFiles: pickedFiles, wireFiles: wireFiles, wireAddNew: wireAddNew, shownValue: shownValue
+    fileHtml: fileHtml, uploadFile: uploadFile, pickedFiles: pickedFiles, wireFiles: wireFiles, filePicker: filePicker, photosToPdf: photosToPdf, wireAddNew: wireAddNew, shownValue: shownValue
   };
 })();
