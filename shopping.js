@@ -141,14 +141,28 @@
       toast(err.message, true); load();
     }
   }
+  // A small dialog while checked items are removed, so it's clear something is happening.
+  function removingDialog(n) {
+    const el = document.createElement("div");
+    el.className = "sh-removing";
+    el.setAttribute("role", "alertdialog");
+    el.setAttribute("aria-live", "assertive");
+    el.innerHTML = '<div class="sh-removing-box"><div class="spinner"></div><div>Removing ' + esc(plural(n, "checked item")) + '…</div></div>';
+    document.body.appendChild(el);
+    return () => el.remove();
+  }
   async function clearChecked(ids) {
+    if (!ids || !ids.length) return;
+    const close = removingDialog(ids.length);
+    let r;
     try {
-      const r = await C.api("shopping.clearChecked", { module: "shopping", ids: ids, reload: true });
-      if (r.moduleData) sh.data = r.moduleData;
-      toast(r.removed ? "Removed " + plural(r.removed, "checked item") : "Nothing to remove");
-      C.state.homeStale = true;
-      C.render();
-    } catch (err) { toast(err.message, true); load(); }
+      r = await C.api("shopping.clearChecked", { module: "shopping", ids: ids, reload: true });
+    } catch (err) { close(); toast(err.message, true); load(); return; }
+    close();   // dialog first, then the result
+    if (r.moduleData) sh.data = r.moduleData;
+    C.state.homeStale = true;
+    C.render();
+    toast(r.removed ? "Removed " + plural(r.removed, "checked item") : "Nothing to remove");
   }
   // Leaving the Shopping List with checked items: ask, then remove them.
   async function askToClear() {
