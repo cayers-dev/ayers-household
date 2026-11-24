@@ -162,7 +162,9 @@ function modRequire_(user, def, t, op, row, values) {
    }
    const owner = row ? row["Added By"] : "";
    const action = op === "add" ? "add" : op === "edit" ? "edit" : "delete";
-   if (!coreCan_(user, def.key, area, action, owner)) {
+   // A module can allow more than the role does (e.g. the season's player removing any planned chore).
+   const extra = def.allow && def.allow(user, Object.keys(def.tables).find(k => def.tables[k] === t), op, row, values);
+   if (!extra && !coreCan_(user, def.key, area, action, owner)) {
       throw coreError_("FORBIDDEN", op === "add" ? "You don't have access to add " + t.label.toLowerCase() + "." :
          "You can only " + (op === "edit" ? "change" : "delete") + " entries you added.");
    }
@@ -327,6 +329,13 @@ function modDelete_(req, user) {
       coreLog_(user, def.key, "Delete", t.label, modTitle_(def, t, row), "Not used anywhere, so removed");
       return { result: "deleted" };
    }
+   // Tables marked hardDelete skip Deleted items: the row is removed for good.
+   if (t.hardDelete) {
+      modRemoveRow_(def, req.table, row);
+      coreLog_(user, def.key, "Delete", t.label, modTitle_(def, t, row), "Removed");
+      if (def.afterDelete) def.afterDelete(req.table, row, user);
+      return { result: "deleted" };
+   }
    modChange_(def, req.table, row, { "Deleted": true, "Deleted By": user.id, "Deleted At": new Date() }, user, "Soft delete");
    if (def.afterDelete) def.afterDelete(req.table, row, user);
    return { result: "softDeleted" };
@@ -370,7 +379,7 @@ function modDeleted_(req, user) {
    const out = [];
    Object.keys(def.tables).forEach(k => {
       const t = def.tables[k];
-      if (t.kind !== "record") return;
+      if (t.kind !== "record" || t.hardDelete) return;
       modRows_(def, k, true).filter(r => r["Deleted"]).forEach(r => out.push({
          table: k, tableLabel: t.label, id: r[t.id], title: modTitle_(def, t, r), deletedBy: r["Deleted By"], deletedAt: r["Deleted At"], addedBy: r["Added By"]
       }));

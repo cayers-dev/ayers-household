@@ -50,7 +50,7 @@ function hockeyDef_() {
                { name: "Season ID", label: "Season", type: "ref", ref: "seasons" },
                { name: "Notes", type: "longtext" }
             ] },
-         plan: { tab: "Chore Plan", label: "Chore Plan", id: "Plan ID", prefix: "PLN-", kind: "record", area: "earnings",
+         plan: { tab: "Chore Plan", label: "Chore Plan", id: "Plan ID", prefix: "PLN-", kind: "record", area: "earnings", hardDelete: true,
             title: r => r["Chore Name"] || r["Chore ID"],
             fields: [
                { name: "Date", type: "date", required: true },
@@ -142,6 +142,7 @@ function hockeyDef_() {
       afterSave: hockeyAfterSave_,
       afterDelete: hockeyAfterDelete_,
       guard: hockeyGuard_,
+      allow: hockeyAllow_,
       home: hockeyHome_,
       actions: {
          load:       { fn: hockeyLoad_ },
@@ -204,6 +205,14 @@ function hockeySeasonForDate_(def, dateStr, user) {
    const mine = s => user && s["Player ID"] === user.id;
    const open = all.filter(s => s["Active"] !== false && inRange(s));
    return open.find(mine) || open[0] || all.find(inRange) || hockeyCurrentSeason_(def, user);
+}
+
+// More than the role allows: the season's player (Data Entry or better on Earnings) may remove
+// any planned chore in their own season, whoever planned it.
+function hockeyAllow_(user, tableKey, op, row) {
+   if (tableKey !== "plan" || op !== "delete" || !row || !user) return false;
+   const season = modRows_(hockeyDef_(), "seasons", true).find(x => x["Season ID"] === row["Season ID"]);
+   return !!season && String(season["Player ID"] || "") === user.id && coreCan_(user, "hockey", "earnings", "add");
 }
 
 // Rules on top of roles for season entries: whose season it is, and closed seasons.

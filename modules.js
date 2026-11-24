@@ -40,6 +40,7 @@
     const t = ctx.schema(table), me = C.state.me;
     if (t.adminOnly && !me.admin) return false;
     if (op !== "view" && ctx.locked && ctx.locked(table, row, values)) return false;
+    if (ctx.allow && ctx.allow(table, op, row, values)) return true;
     const area = tableArea(ctx, table, Object.assign({}, row || {}, values || {}));
     if (t.kind === "list") return can(ctx, area, "addListValue");
     if (op === "add") return can(ctx, area, "add");

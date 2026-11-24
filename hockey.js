@@ -61,6 +61,8 @@
       chores: D().chores, venues: D().venues, consequences: D().consequences, lists: D().lists, settings: D().settingsRows
     }[t] || []),
     locked: t => closedLock() && SEASON_TABLES.indexOf(t) !== -1,
+    // The season's player may remove any planned chore in their season (matches the server).
+    allow: (t, op, row) => t === "plan" && op === "delete" && !!row && D().settings.playerId === C.state.me.id && M.can(ctx, "earnings", "add"),
     refLabel: (t, r) => t === "chores" ? r["Chore"] + " – " + money(r["Amount"]) : t === "seasons" ? seasonLabel(r) :
       t === "venues" ? r["Name"] : t === "lists" ? r["Value"] : t === "consequences" ? r["Level"] + ". " + r["Consequence"] :
       t === "settings" ? r["Setting"] + ": " + r["Value"] : (r["Title"] || r["Item"] || ""),
