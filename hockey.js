@@ -300,13 +300,33 @@
     const prev = isoDay(new Date(y, m - 2, 1)).slice(0, 7), next = isoDay(new Date(y, m, 1)).slice(0, 7);
     const items = d.plan.filter(p => String(p["Date"]).slice(0, 7) === month);
     const price = p => { const c = choreById(p["Chore ID"]); return c ? Number(c["Amount"]) : 0; };
-    // Earned this month counts toward the month; planned = chores not yet done (done ones are in earned).
+    // Earned this month; planned = chores not yet done (done ones are already in earned).
+    const t0 = today();
     const earned = (d.earnings || []).filter(e => String(e["Date"]).slice(0, 7) === month).reduce((s, e) => s + (Number(e["Amount"]) || 0), 0);
-    const plannedTotal = items.filter(p => p["Status"] !== "Done").reduce((s, p) => s + price(p), 0);
-    const required = d.months ? ((d.months.find(x => x.start.slice(0, 7) === month) || {}).toEarn || 0)
-      : (d.weeks || []).filter(w => w.start.slice(0, 7) === month).reduce((s, w) => s + w.weeklyRequired, 0);
-    const toPlan = required - earned - plannedTotal;
+    const open = items.filter(p => p["Status"] !== "Done");
+    const plannedTotal = open.reduce((s, p) => s + price(p), 0);
+    const plannedAhead = open.filter(p => String(p["Date"]).slice(0, 10) >= t0).reduce((s, p) => s + price(p), 0);
+    // Month target: each week's target (with the past-due extra where it applied); coming weeks at their base amount.
+    // Still to plan looks forward: what's left of this week's target + the coming weeks this month - chores planned from today.
+    let target, ahead, past;
+    if (d.months) {
+      const mo = d.months.find(x => x.start.slice(0, 7) === month) || {};
+      target = mo.toEarn || 0;
+      past = mo.state === "done";
+      ahead = past ? 0 : Math.max(0, (mo.toEarn || 0) - earned);
+    } else {
+      // A week belongs to the month holding most of its days (its Thursday).
+      const monthOf = w => { const t = parseIso(w.start); t.setDate(t.getDate() + 3); return isoDay(t).slice(0, 7); };
+      const wk = (d.weeks || []).filter(w => monthOf(w) === month);
+      const tgt = w => w.state === "future" ? w.weeklyRequired : (w.target !== undefined ? w.target : w.weeklyRequired);
+      target = wk.reduce((s, w) => s + tgt(w), 0);
+      past = wk.length > 0 && wk.every(w => w.state === "done");
+      ahead = wk.reduce((s, w) => s + (w.state === "current" ? Math.max(0, w.remaining !== undefined ? w.remaining : w.weeklyRequired - (w.weeklyEarned || 0))
+        : w.state === "future" ? w.weeklyRequired : 0), 0);
+    }
+    const toPlan = ahead - plannedAhead;
     const canPlan = M.tableCan(ctx, "plan", "add");
+    const admin = C.isAdmin();
     let list = "";
     for (let i = 1; i <= days; i++) {
       const day = isoDay(new Date(y, m - 1, i));
@@ -321,19 +341,22 @@
             (canDel ? '<button class="hk-chip-x" data-hk="plan-del" data-id="' + esc(p["Plan ID"]) + '" aria-label="Remove ' + esc(name) + ' from the plan">' + ICONS.close + '</button>' : "") +
             '</span>';
         }).join("") +
-        (canPlan ? '<button class="chip hk-add" data-hk="plan-add" data-date="' + day + '" aria-label="Plan a chore on ' + esc(fmtDay(day)) + '">' + ICONS.plus + '</button>' : "") + '</div></div>';
+        (canPlan && (day >= t0 || admin) ? '<button class="chip hk-add" data-hk="plan-add" data-date="' + day + '" aria-label="Plan a chore on ' + esc(fmtDay(day)) + '">' + ICONS.plus + '</button>' : "") + '</div></div>';
     }
     const html =
       '<div class="hk-month-nav"><a class="icon-btn" href="#/hockey/plan/' + prev + '" aria-label="Previous month">' + ICONS.back + '</a>' +
         '<b>' + esc(first.toLocaleDateString(undefined, { month: "long", year: "numeric" })) + '</b>' +
         '<a class="icon-btn" href="#/hockey/plan/' + next + '" aria-label="Next month">' + ICONS.next + '</a></div>' +
       '<div class="card hk-kv hk-plan-sum">' +
-        '<div><span>Month required</span><b>' + money(required) + '</b></div>' +
+        '<div><span>Month target</span><b>' + money(target) + '</b></div>' +
         '<div><span>Earned this month</span><b>' + money(earned) + '</b></div>' +
         '<div><span>Planned (not done)</span><b>' + money(plannedTotal) + '</b></div>' +
-        '<div><span>' + (toPlan > 0.005 ? "Still to plan" : "Covered") + '</span><b class="' + (toPlan > 0.005 ? "neg" : "pos") + '">' +
-          (toPlan > 0.005 ? money(toPlan) : toPlan < -0.005 ? money(-toPlan) + " over" : "On target") + '</b></div></div>' +
-      '<p class="hint" style="margin:8px 4px">Still to plan = month required − earned this month − planned chores not yet done. Tap a planned chore to log it as done. Prices shown are today’s chore prices.</p>' +
+        (past ? '<div><span>' + (earned - target < -0.005 ? "Short by" : "Over by") + '</span><b class="' + (earned - target < -0.005 ? "neg" : "pos") + '">' + money(Math.abs(earned - target)) + '</b></div>'
+          : '<div><span>' + (toPlan > 0.005 ? "Still to plan" : "Covered") + '</span><b class="' + (toPlan > 0.005 ? "neg" : "pos") + '">' +
+            (toPlan > 0.005 ? money(toPlan) : toPlan < -0.005 ? money(-toPlan) + " over" : "On target") + '</b></div>') + '</div>' +
+      '<p class="hint" style="margin:8px 4px">' + (past ? "This month is over." :
+        "Still to plan = what’s left of this week’s target (including any past-due extra) + the coming weeks’ targets this month − chores planned from today on.") +
+        ' Tap a planned chore to log it as done. Prices shown are today’s chore prices.' + (admin ? "" : " Chores can be planned for today or later.") + '</p>' +
       '<div class="card hk-days">' + list + '</div>';
     return { title: "Chore plan", back: true, html: html, keepScroll: true };
   }

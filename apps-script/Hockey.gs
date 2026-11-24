@@ -258,6 +258,11 @@ function hockeyBeforeSave_(tableKey, values, before, user, req) {
       if (tableKey === "earnings") values["Amount"] = chore["Amount"];
    }
    if (tableKey === "plan" && !before) values["Status"] = "Planned";
+   // Only admins may plan a chore on a day that has already passed.
+   if (tableKey === "plan" && !user.admin && values["Date"] !== undefined && (!before || hockeyIso_(values["Date"]) !== hockeyIso_(before["Date"]))
+       && hockeyIso_(values["Date"]) < hockeyToday_()) {
+      throw coreError_("INVALID", "Chores can only be planned for today or later.");
+   }
    // Season: picked, else the one the date falls in.
    if (["earnings", "plan", "events", "expenses"].indexOf(tableKey) !== -1 && !merged["Season ID"]) {
       const d = tableKey === "events" ? hockeyIso_(merged["Start"]) : hockeyIso_(merged["Date"]);
@@ -483,7 +488,8 @@ function hockeyLoad_(req, user) {
       if (months) out.months = months;
    } else if (shows("earnings")) {
       // Planning needs the month's required amount even without the totals screen.
-      out.weeks = weeks.map(w => ({ start: w.start, end: w.end, weeklyRequired: w.weeklyRequired, state: w.state }));
+      out.weeks = weeks.map(w => ({ start: w.start, end: w.end, weeklyRequired: w.weeklyRequired, state: w.state,
+         target: w.target, remaining: w.remaining, weeklyEarned: w.weeklyEarned, pastDue: w.pastDue }));
       if (months) out.months = months.map(x => ({ start: x.start, end: x.end, toEarn: x.toEarn, state: x.state }));
    }
    if (shows("expenses")) out.expenses = expensesAll.filter(inSeason);
