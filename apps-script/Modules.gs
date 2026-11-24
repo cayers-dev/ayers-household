@@ -22,7 +22,7 @@
 // All module definitions, by key. (A function, not a top-level object, so
 // file load order in the Apps Script project never matters.)
 function modDefs_() {
-   return { hockey: hockeyDef_(), shopping: shoppingDef_() };
+   return { hockey: hockeyDef_(), shopping: shoppingDef_(), vehicles: vehiclesDef_() };
 }
 
 const MOD_SYSTEM_COLS = ["Added By", "Added At", "Updated By", "Updated At", "Deleted", "Deleted By", "Deleted At"];

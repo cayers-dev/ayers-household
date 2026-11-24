@@ -26,20 +26,22 @@ Mobile web app for the Ayers household: vehicles, travel hockey, inventory, fina
 | `Setup.gs` | `coreSetup()`: builds the Core tabs and the starting users, modules, areas and permissions. Safe to re-run; it only adds what's missing. |
 | `Modules.gs` | Shared engine for every module: tables, add / edit / soft delete / restore / permanent delete, dropdown lists (in use = turned off instead of deleted), permission checks, Due Soon. |
 | `Hockey.gs` | Travel Hockey: seasons, earnings, chore plan, weekly totals and consequences, expenses, schedule, venues. `hockeySetup()` builds its spreadsheet's tabs and fills the lists. |
+| `Shopping.gs` | Shopping List: items, check off, remove checked, add several at once. `shoppingSetup()`. |
+| `Vehicles.gs` | Vehicles: vehicles, features, plates, places, service visits and lines, odometer, intervals (due dates, mileage estimates), insurance policies and cards, registrations, files in Drive, Due Soon. `vehiclesSetup()`. |
 
-Front-end files: `app.js` (core), `modules.js` (shared module screens: forms, list managers, deleted items), `hockey.js` (Travel Hockey screens).
+Front-end files: `app.js` (core), `modules.js` (shared module screens: forms, list managers, deleted items), `hockey.js` (Travel Hockey screens), `shopping.js` (Shopping List), `vehicles.js` (Vehicles).
 
 ## Modules
 
 | Key | Module | Status |
 |---|---|---|
-| vehicles | Vehicles | Coming soon |
+| vehicles | Vehicles | Active (spreadsheet "Ayers Household - Vehicles") |
 | hockey | Travel Hockey | Active (spreadsheet "Ayers Household - Travel Hockey") |
 | inventory | Inventory | Coming soon |
 | financial | Financial | Coming soon |
 | tasks | Tasks | Coming soon |
 | work | Work | Coming soon |
 | home | Home Maintenance & Projects | Coming soon |
-| shopping | Shopping List | Coming soon |
+| shopping | Shopping List | Active (spreadsheet "Ayers Household - Shopping List") |
 
 Requirements and decisions: the "Household App Set Up - with Follow-Up Questions" Google Doc.

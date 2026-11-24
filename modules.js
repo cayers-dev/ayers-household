@@ -81,6 +81,7 @@
     if (f.type === "date") return fmtDay(v, { year: "numeric" });
     if (f.type === "datetime") return fmtDayTime(v);
     if (f.type === "user") return userName(ctx, v);
+    if (f.type === "file") return v ? "File attached" : "";
     if (f.type === "ref") {
       const rt = ctx.schema(f.ref), r = ctx.rows(f.ref).find(x => x[rt.id] === v);
       return r ? ctx.refLabel(f.ref, r) : v;
@@ -97,6 +98,16 @@
     const lab = '<label for="' + id + '">' + label + (f.required ? ' <span class="req">*</span>' : "") + '</label>';
     const hint = f.hint ? '<div class="hint">' + esc(f.hint) + '</div>' : "";
     if (opts.hidden) return '<input type="hidden" name="' + esc(f.name) + '" value="' + esc(v) + '">';
+    if (f.type === "file") {
+      const ro = f.readOnly || opts.readOnly;
+      if (ro && !v) return "";
+      return '<div class="field file-field" data-file-field="' + esc(f.name) + '"><label>' + label + '</label>' +
+        (v ? '<div class="file-current">' + fileHtml(ctx, v, "file-thumb") + '</div>' : "") +
+        (ro ? "" : '<div class="file-actions"><label class="btn file-btn"><input type="file" accept="image/*,application/pdf" data-file-input="' + esc(f.name) + '"> ' +
+          (v ? "Replace" : "Add photo or file") + '</label>' +
+          (v ? '<button type="button" class="link-btn" data-file-clear="' + esc(f.name) + '">Remove</button>' : "") + '<span class="file-picked"></span></div>') +
+        (ro ? "" : hint) + '</div>';
+    }
     if (f.readOnly || opts.readOnly) {
       if (v === "" && f.type !== "bool") return "";
       return '<div class="field"><label>' + label + '</label><div class="ro-value">' + esc(shownValue(ctx, f, v)) + '</div>' + (opts.readOnly ? "" : hint) + '</div>';
@@ -172,6 +183,105 @@
   }
 
   // ------------------------------------------------------------------
+  // Files (photos, cards, receipts): picked in a form, uploaded after the record is saved.
+  // Shown through the module's "<module>.file" action so they stay private to app users.
+  // ------------------------------------------------------------------
+  const driveId = url => { const m = /\/d\/([A-Za-z0-9_-]{10,})/.exec(String(url || "")); return m ? m[1] : ""; };
+  const fileCache = {};   // fileId -> { url (blob), mime, name } | { loading } | { error }
+  function fileHtml(ctx, url, cls) {
+    const id = driveId(url);
+    if (!id) return "";
+    const c = fileCache[id];
+    if (c && c.mime === "application/pdf") return '<button type="button" class="btn file-pdf" data-file-open="' + esc(id) + '">' + ICONS.next + ' Open PDF</button>';
+    return '<img class="' + esc(cls || "file-thumb") + '" alt="" data-file-id="' + esc(id) + '" data-file-mod="' + esc(ctx.key) + '"' + (c && c.url ? ' src="' + c.url + '"' : "") +
+      ' role="button" tabindex="0" data-file-open="' + esc(id) + '">';
+  }
+  function hydrateFiles(root) {
+    $$("img[data-file-id]", root || document).forEach(img => {
+      const id = img.dataset.fileId, c = fileCache[id];
+      if (c && c.url) { if (img.getAttribute("src") !== c.url) img.src = c.url; return; }
+      if (c) return;
+      fileCache[id] = { loading: true };
+      C.api(img.dataset.fileMod + ".file", { fileId: id }).then(r => {
+        const bin = atob(r.file.data), arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        const url = URL.createObjectURL(new Blob([arr], { type: r.file.mimeType }));
+        fileCache[id] = { url: url, mime: r.file.mimeType, name: r.file.name };
+        if (r.file.mimeType === "application/pdf") C.render();
+        else $$('img[data-file-id="' + id + '"]').forEach(x => { x.src = url; });
+      }).catch(() => { fileCache[id] = { error: true }; $$('img[data-file-id="' + id + '"]').forEach(x => x.classList.add("file-missing")); });
+    });
+  }
+  new MutationObserver(() => hydrateFiles()).observe(document.documentElement, { childList: true, subtree: true });
+  function openFile(id) {
+    const c = fileCache[id];
+    if (!c || !c.url) { toast("Still loading, try again in a moment."); return; }
+    if (c.mime === "application/pdf") { window.open(c.url, "_blank"); return; }
+    const v = document.createElement("div");
+    v.className = "file-viewer";
+    v.innerHTML = '<img alt="" src="' + c.url + '"><button type="button" class="icon-btn" aria-label="Close">' + ICONS.close + '</button>';
+    document.body.appendChild(v);
+    v.addEventListener("click", () => v.remove());
+  }
+  // A photo is shrunk to about 1600 px (JPEG); a PDF goes as it is.
+  function prepareFile(file) {
+    return new Promise((resolve, reject) => {
+      const asIs = () => {
+        const fr = new FileReader();
+        fr.onload = () => resolve({ data: String(fr.result).replace(/^data:[^,]*,/, ""), mimeType: file.type || "application/octet-stream", name: file.name });
+        fr.onerror = () => reject(new Error("That file couldn't be read."));
+        fr.readAsDataURL(file);
+      };
+      if (!/^image\//.test(file.type)) return asIs();
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+        const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
+        const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+        const g = cv.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, w, h); g.drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        resolve({ data: cv.toDataURL("image/jpeg", 0.82).split(",")[1], mimeType: "image/jpeg", name: file.name });
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); asIs(); };
+      img.src = url;
+    });
+  }
+  async function uploadFile(ctx, table, id, field, file) {
+    const f = await prepareFile(file);
+    C.busy(true);
+    try {
+      const r = await C.api(ctx.key + ".upload", { module: ctx.key, table: table, id: id, field: field, file: f, reload: true });
+      if (r.moduleData && ctx.applyData) ctx.applyData(r.moduleData);
+      toast("File saved");
+      C.render();
+      return r;
+    } finally { C.busy(false); }
+  }
+  function pickedFiles(form) {
+    return form ? $$("input[data-file-input]", form).filter(i => i.files && i.files[0]).map(i => ({ field: i.dataset.fileInput, file: i.files[0] })) : [];
+  }
+  function wireFiles(ctx, form, rec) {
+    $$("input[data-file-input]", form).forEach(i => i.addEventListener("change", () => {
+      const s = i.closest(".file-actions").querySelector(".file-picked");
+      if (s) s.textContent = i.files && i.files[0] ? i.files[0].name + " (saved with the form)" : "";
+    }));
+    $$("[data-file-clear]", form).forEach(b => b.addEventListener("click", async () => {
+      if (!rec) return;
+      if (!(await confirmSheet({ title: "Remove file?", message: "The file is unlinked here. It stays in the Vehicles folder in Drive.", submitLabel: "Remove", danger: true }))) return;
+      try {
+        C.busy(true);
+        const r = await C.api(ctx.key + ".clearFile", { module: ctx.key, table: rec.table, id: rec.id, field: b.dataset.fileClear, reload: true });
+        if (r.moduleData && ctx.applyData) ctx.applyData(r.moduleData);
+        toast("File removed"); rec.close(); C.render();
+      } catch (err) { toast(err.message, true); } finally { C.busy(false); }
+    }));
+  }
+  document.addEventListener("click", e => {
+    const o = e.target.closest("[data-file-open]");
+    if (o) { e.preventDefault(); openFile(o.dataset.fileOpen); }
+  });
+
+  // ------------------------------------------------------------------
   // Record form (add / edit / delete) for any table
   // ------------------------------------------------------------------
   // opts: { prefill, title, onCreated(id, values), onSaved(), lockList, hide: [field names], extraBody }
@@ -198,12 +308,15 @@
         (admin && t.kind === "record" ? '<button type="button" class="btn danger" data-rf="purge">Delete permanently</button>' : "") +
         '</div>' : "");
     const title = opts.title || (row ? (editable ? "Edit " : "") + ctx.title(table, row) : "Add " + ctx.singular(table));
+    let formEl = null;
     openSheet({
       title: title, body: body, noSubmit: !editable, cancelLabel: editable ? "Cancel" : "Close",
       submitLabel: row ? "Save" : "Add",
       onReady: (form, close) => {
+        formEl = form;
         $$("input, select, textarea", form).forEach(el => { if (!editable && el.type !== "hidden") el.disabled = true; });
         wireAddNew(ctx, table, form);
+        wireFiles(ctx, form, row ? { table: table, id: id, close: close } : null);
         if (ctx.onFormReady) ctx.onFormReady(table, form, row);
         $$("[data-rf]", form).forEach(b => b.addEventListener("click", async () => {
           const act = b.dataset.rf;
@@ -245,6 +358,11 @@
           res = await send(answer);
         }
         if (!res) return false;
+        const picked = pickedFiles(formEl);
+        for (const p of picked) {
+          try { await uploadFile(ctx, table, row ? id : res.id, p.field, p.file); }
+          catch (err) { toast(err.message, true); }
+        }
         if (!row && opts.onCreated) await opts.onCreated(res.id, payload);
         if (opts.onSaved) opts.onSaved(res);
         return true;
@@ -346,6 +464,7 @@
     money: money, parseIso: parseIso, isoDay: isoDay, fmtDay: fmtDay, fmtTime: fmtTime, fmtDayTime: fmtDayTime,
     userName: userName, userLabel: userLabel,
     can: can, tableCan: tableCan, fieldHtml: fieldHtml, recordForm: recordForm, confirmSheet: confirmSheet, chooseSheet: chooseSheet,
-    listView: listView, deletedView: deletedView, clearDeleted: key => { delete deletedCache[key]; }
+    listView: listView, deletedView: deletedView, clearDeleted: key => { delete deletedCache[key]; },
+    fileHtml: fileHtml, uploadFile: uploadFile, pickedFiles: pickedFiles, wireFiles: wireFiles, wireAddNew: wireAddNew, shownValue: shownValue
   };
 })();
