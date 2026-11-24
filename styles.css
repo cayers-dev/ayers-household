@@ -853,3 +853,13 @@ body.syncing::before { content: ""; position: fixed; top: 0; left: 0; right: 0; 
 .sh-removing-box { display: flex; align-items: center; gap: 14px; background: var(--surface); color: var(--text); border-radius: var(--radius);
   padding: 18px 22px; box-shadow: var(--shadow); font-weight: 650; max-width: calc(100% - 48px); }
 .sh-removing-box .spinner { flex: none; }
+.sh-add #sh_qty { flex: 0 0 64px; width: 64px; padding: 11px 8px; text-align: center; }
+.sh-item.pending { opacity: .55; }
+.sh-item.pending .sh-check { border-style: dashed; }
+.sh-grid { margin: 0 0 14px; }
+.sh-grid-head, .sh-grid-row { display: grid; grid-template-columns: 1fr 72px; gap: 8px; }
+.sh-grid-head { font-size: 13px; font-weight: 650; color: var(--muted); margin: 0 2px 6px; }
+.sh-grid-rows { display: flex; flex-direction: column; gap: 6px; }
+.sh-grid-row input { width: 100%; min-width: 0; padding: 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-size: 16px; }
+.sh-grid-row input[type=number] { text-align: center; }
+.sh-grid-more { margin-top: 8px; padding: 0; }

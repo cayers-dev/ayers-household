@@ -51,7 +51,7 @@
       if (["AUTH", "NOT_ALLOWED", "SETUP"].indexOf(err.code) !== -1) { sh.loading = false; C.handleError(err); return; }
       if (!silent) sh.error = err.message;
     } finally { sh.loading = false; }
-    if (C.parseRoute().name === "shopping") C.render();
+    redraw();
   }
 
   const ctx = {
@@ -102,26 +102,66 @@
   const can = (cap, row) => M.tableCan(ctx, "items", cap, row);
   const canCheck = () => M.can(ctx, "list", "add");
 
-  // Quick add: asks about duplicates the same way the full form does.
-  async function addItem(values, extra) {
+  // Redraw the list without losing what's being typed in the add boxes (or where the cursor is).
+  function redraw() {
+    if (C.parseRoute().name !== "shopping") return;
+    const a = document.activeElement, keep = {};
+    ["sh_add", "sh_qty"].forEach(id => { const el = $("#" + id); if (el) keep[id] = el.value; });
+    const focusId = sh.focusAdd ? "sh_add" : (a && (a.id === "sh_add" || a.id === "sh_qty") ? a.id : "");
+    sh.focusAdd = false;
+    C.render();
+    Object.keys(keep).forEach(id => { const el = $("#" + id); if (el) el.value = keep[id]; });
+    if (focusId) { const el = $("#" + focusId); if (el) { el.focus({ preventScroll: true }); try { const n = el.value.length; el.setSelectionRange(n, n); } catch (e) { /* number inputs */ } } }
+  }
+
+  // Quick add: the item shows on the list at once (dimmed until saved); the server answers with
+  // its ID. Something already on the list asks first, the same way the full form does.
+  let tmpN = 0;
+  async function quickAddSend(values, extra) {
+    const tmp = { "Item ID": "tmp-" + (++tmpN), "Item": values["Item"], "Quantity": values["Quantity"] !== undefined ? values["Quantity"] : "",
+      "Store": values["Store"] || "", "Status": "Needed", "Added By": C.state.me.id, _pending: true };
+    D().items.push(tmp);
+    redraw();
+    let res;
     try {
-      return await ctx.save("modAdd", Object.assign({ table: "items", values: values }, extra || {}), "Added " + values["Item"]);
+      res = await C.api("modAdd", Object.assign({ module: "shopping", table: "items", values: values }, extra || {}));
     } catch (err) {
-      if (err.code !== "CONFIRM") { toast(err.message, true); return null; }
-      const answer = await ctx.confirm(err.confirm);
-      if (!answer) return null;
-      return addItem(values, answer);
+      D().items = D().items.filter(i => i !== tmp);
+      redraw();
+      if (["AUTH", "NOT_ALLOWED", "SETUP"].indexOf(err.code) !== -1) { C.authStop(err); return; }
+      if (err.code === "CONFIRM") {
+        const answer = await ctx.confirm(err.confirm);
+        if (answer) await quickAddSend(values, answer);
+        return;
+      }
+      toast(err.message, true);
+      if (err.code === "FORBIDDEN") load();
+      return;
     }
+    if (res.merged) {
+      D().items = D().items.filter(i => i !== tmp);
+      const it = D().items.find(i => i["Item ID"] === res.id);
+      if (it) it["Quantity"] = res.quantity;
+      toast("Added to the one already on the list");
+    } else {
+      tmp["Item ID"] = res.id; delete tmp._pending;
+    }
+    C.state.homeStale = true;
+    redraw();
   }
   function quickAdd() {
-    const input = $("#sh_add");
+    const input = $("#sh_add"), qtyIn = $("#sh_qty");
     const name = (input && input.value || "").replace(/\s+/g, " ").trim();
-    if (!name) return;
+    if (!name) { if (input) input.focus(); return; }
+    const qtyRaw = (qtyIn && qtyIn.value || "").trim();
+    if (qtyRaw !== "" && (isNaN(Number(qtyRaw)) || Number(qtyRaw) < 0)) { toast("Quantity must be a number", true); if (qtyIn) qtyIn.focus(); return; }
     const s = storeFilter();
     const v = { "Item": name };
+    if (qtyRaw !== "") v["Quantity"] = Number(qtyRaw);
     if (s) v["Store"] = s;
-    input.value = "";
-    addItem(v).then(r => { if (!r) input.value = name; });
+    input.value = ""; if (qtyIn) qtyIn.value = "";
+    sh.focusAdd = true;   // ready for the next item
+    quickAddSend(v);
   }
 
   // Check off: grays the item out (tap again to uncheck). Leaving the list asks to remove checked items.
@@ -130,12 +170,10 @@
     if (!it) return;
     const on = !isChecked(it);
     it["Status"] = on ? "Checked" : "Needed";   // show it at once
-    C.render();
+    redraw();
     try {
-      const r = await C.api(on ? "shopping.check" : "shopping.uncheck", { module: "shopping", id: id, reload: true });
-      if (r.moduleData) sh.data = r.moduleData;
+      await C.api(on ? "shopping.check" : "shopping.uncheck", { module: "shopping", id: id });   // shown already; nothing to reload
       C.state.homeStale = true;
-      if (C.parseRoute().name === "shopping") C.render();
     } catch (err) {
       if (["AUTH", "NOT_ALLOWED", "SETUP"].indexOf(err.code) !== -1) return C.authStop(err);
       toast(err.message, true); load();
@@ -175,20 +213,39 @@
     if (ok) clearChecked(ids);
   }
 
-  // Add several at once: one item per line, same store and category for all.
+  // Add several at once: a grid of item + quantity rows; same store, category and urgent for all.
+  const gridRow = i => '<div class="sh-grid-row"><input type="text" name="n' + i + '" placeholder="Item" aria-label="Item ' + (i + 1) + '" autocomplete="off">' +
+    '<input type="number" name="q' + i + '" placeholder="Qty" aria-label="Quantity ' + (i + 1) + '" inputmode="decimal" min="0" step="any"></div>';
   function addSeveral() {
     const opt = (list, cur) => '<option value=""></option>' + listValues(list).map(l => l["Value"]).sort((a, b) => a.localeCompare(b))
       .map(v => '<option' + (v === cur ? " selected" : "") + '>' + esc(v) + '</option>').join("");
+    let rows = 5;
     C.openSheet({
       title: "Add several items",
-      body: '<div class="field"><label for="f_lines">Items, one per line</label><textarea id="f_lines" name="lines" rows="8" required placeholder="Milk&#10;Eggs&#10;Bread"></textarea></div>' +
+      body: '<div class="sh-grid"><div class="sh-grid-head"><span>Item</span><span>Qty</span></div><div class="sh-grid-rows">' +
+          [0, 1, 2, 3, 4].map(gridRow).join("") + '</div>' +
+          '<button type="button" class="link-btn sh-grid-more">+ Another row</button></div>' +
         '<div class="field"><label for="f_store">Store</label><select id="f_store" name="store">' + opt("Store", storeFilter()) + '</select></div>' +
         '<div class="field"><label for="f_cat">Category</label><select id="f_cat" name="category">' + opt("Category", "") + '</select></div>' +
         '<div class="field"><label class="check"><input type="checkbox" name="urgent"> Urgent</label></div>' +
-        '<p class="hint">Quantity and unit can be set on each item afterwards. Items already on the list are skipped.</p>',
+        '<p class="hint">Blank rows are ignored. Items already on the list are skipped.</p>',
       submitLabel: "Add",
+      onReady: form => {
+        const box = $(".sh-grid-rows", form);
+        const more = () => { box.insertAdjacentHTML("beforeend", gridRow(rows++)); };
+        $(".sh-grid-more", form).addEventListener("click", () => { more(); const last = box.lastElementChild.querySelector("input"); if (last) last.focus(); });
+        // Typing in the last row adds a fresh one below it.
+        box.addEventListener("input", e => { if (e.target.closest(".sh-grid-row") === box.lastElementChild && e.target.value) more(); });
+        const first = $('input[name="n0"]', form); if (first) setTimeout(() => first.focus(), 50);
+      },
       onSubmit: async v => {
-        const r = await ctx.save("shopping.addMany", { lines: v.lines, store: v.store, category: v.category, urgent: v.urgent === true || v.urgent === "on" },
+        const items = [];
+        for (let i = 0; i < rows; i++) {
+          const n = String(v["n" + i] || "").trim();
+          if (n) items.push({ item: n, quantity: String(v["q" + i] || "").trim() });
+        }
+        if (!items.length) throw new Error("Type at least one item.");
+        const r = await ctx.save("shopping.addMany", { items: items, store: v.store, category: v.category, urgent: v.urgent === true },
           res => "Added " + plural(res.added, "item") + (res.skipped && res.skipped.length ? ". Already on the list: " + res.skipped.join(", ") : ""));
         return !!r;
       }
@@ -200,12 +257,12 @@
   // ------------------------------------------------------------------
   function itemRow(r, showStore) {
     const me = C.state.me.id;
-    const done = isChecked(r);
+    const done = isChecked(r), pending = !!r._pending;
     const sub = [showStore && r["Store"] && !anyStore(r["Store"]) ? r["Store"] : "", r["Notes"], r["Added By"] && r["Added By"] !== me ? M.userName(ctx, r["Added By"]) : ""].filter(Boolean).join(" · ");
-    return '<div class="list-item sh-item' + (r["Urgent"] === true ? " urgent" : "") + (done ? " checked" : "") + '">' +
-      (canCheck() ? '<button class="sh-check' + (done ? " on" : "") + '" data-sh="check" data-id="' + esc(r["Item ID"]) + '" aria-pressed="' + done + '" aria-label="' + (done ? "Uncheck " : "Check off ") + esc(r["Item"]) + '">' + (done ? IC.check : "") + '</button>'
+    return '<div class="list-item sh-item' + (r["Urgent"] === true ? " urgent" : "") + (done ? " checked" : "") + (pending ? " pending" : "") + '">' +
+      (canCheck() && !pending ? '<button class="sh-check' + (done ? " on" : "") + '" data-sh="check" data-id="' + esc(r["Item ID"]) + '" aria-pressed="' + done + '" aria-label="' + (done ? "Uncheck " : "Check off ") + esc(r["Item"]) + '">' + (done ? IC.check : "") + '</button>'
         : '<span class="sh-check off' + (done ? " on" : "") + '" aria-hidden="true">' + (done ? IC.check : "") + '</span>') +
-      '<div class="body" role="button" tabindex="0" data-mod-edit="items" data-id="' + esc(r["Item ID"]) + '">' +
+      '<div class="body"' + (pending ? "" : ' role="button" tabindex="0" data-mod-edit="items" data-id="' + esc(r["Item ID"]) + '"') + '>' +
         '<div class="title">' + esc(r["Item"]) + (qtyText(r) ? ' <span class="sh-qty">' + esc(qtyText(r)) + '</span>' : "") + '</div>' +
         (sub ? '<div class="sub">' + esc(sub) + '</div>' : "") + '</div>' +
       '</div>';
@@ -236,7 +293,8 @@
           return '<button class="sh-chip' + (s === x ? " on" : "") + '" data-sh="store" data-store="' + esc(x) + '">' + esc(x) + ' <span>' + n + '</span></button>';
         })).join("") + '</div>';
     const addBar = can("add") ?
-      '<div class="sh-add"><input id="sh_add" type="text" placeholder="Add an item' + (s ? " for " + esc(s) : "") + '" autocomplete="off" enterkeyhint="done" aria-label="Add an item">' +
+      '<div class="sh-add"><input id="sh_add" type="text" placeholder="Add item" autocomplete="off" enterkeyhint="done" aria-label="Add an item">' +
+        '<input id="sh_qty" type="number" placeholder="Qty" inputmode="decimal" min="0" step="any" enterkeyhint="done" aria-label="Quantity">' +
         '<button class="btn primary" data-sh="add" aria-label="Add">' + ICONS.plus + '</button>' +
         '<button class="btn" data-sh="more" aria-label="Add with details">More</button></div>' +
       '<div class="sh-tools"><button class="link-btn" data-sh="several">Add several at once</button>' +
@@ -295,13 +353,17 @@
       case "clear": clearChecked(checkedItems().map(i => i["Item ID"])); break;
       case "several": addSeveral(); break;
       case "add": quickAdd(); break;
-      case "more": M.recordForm(ctx, "items", "", { title: "Add an item", prefill: { "Item": ($("#sh_add") || {}).value || "" } }); break;
+      case "more": {
+        const q = ($("#sh_qty") || {}).value || "";
+        M.recordForm(ctx, "items", "", { title: "Add an item", prefill: Object.assign({ "Item": ($("#sh_add") || {}).value || "" }, q !== "" ? { "Quantity": q } : {}) });
+        break;
+      }
       case "store": setStoreFilter(d.store || ""); C.render(); break;
       case "retry": sh.error = ""; C.render(); break;
     }
   });
   document.addEventListener("keydown", e => {
-    if (e.key === "Enter" && e.target && e.target.id === "sh_add") { e.preventDefault(); quickAdd(); }
+    if (e.key === "Enter" && e.target && (e.target.id === "sh_add" || e.target.id === "sh_qty")) { e.preventDefault(); quickAdd(); }
   });
   document.addEventListener("change", e => {
     if (e.target && e.target.matches("[data-sh='group']")) { setGrouped(e.target.checked); C.render(); }
@@ -319,7 +381,8 @@
     if (document.visibilityState !== "visible" || C.parseRoute().name !== "shopping" || !sh.data || sh.loading) return;
     if (document.querySelector(".sheet-backdrop")) return;
     const a = document.activeElement;
-    if (a && a.id === "sh_add" && a.value) return;
+    if (a && (a.id === "sh_add" || a.id === "sh_qty") && a.value) return;
+    if ((sh.data.items || []).some(i => i._pending)) return;
     load(true);
   }, REFRESH_MS);
 })();

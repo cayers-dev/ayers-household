@@ -39,6 +39,13 @@ function modTableDef_(def, tableKey) {
    return t;
 }
 
+// A module's entry in the Change Log. Modules marked quietLog (the Shopping List) skip it to keep saves quick;
+// admin changes to the module itself (Modules, Permissions) are still logged by Core.
+function modLog_(def, user, action, table, record, changes, always) {
+   if (def.quietLog && !always) return;
+   coreLog_(user, def.key, action, table, record, changes, always);
+}
+
 // Headers for a table, in the order a new tab gets them.
 function modHeaders_(t) {
    return [t.id].concat(t.fields.map(f => f.name)).concat(t.kind === "list" ? ["Active"] : []).concat(MOD_SYSTEM_COLS);
@@ -258,7 +265,7 @@ function modInsert_(def, tableKey, values, user) {
    rec["Added By"] = user.id; rec["Added At"] = new Date(); rec["Deleted"] = false;
    coreAppendRow_(modSheet_(def, t), rec, true);   // whole row in one write
    modForget_(def, tableKey);
-   coreLog_(user, def.key, "Add", t.label, modTitle_(def, t, rec), coreDescribe_(values));
+   modLog_(def, user, "Add", t.label, modTitle_(def, t, rec), coreDescribe_(values));
    return id;
 }
 
@@ -269,7 +276,7 @@ function modChange_(def, tableKey, row, values, user, logAction) {
    if (changes.length) {
       coreWriteChanges_(modSheet_(def, t), row._row, {}, { "Updated By": user.id, "Updated At": new Date() });
       modForget_(def, tableKey);
-      coreLog_(user, def.key, logAction || "Edit", t.label, modTitle_(def, t, Object.assign({}, row, values)), changes.join("; "));
+      modLog_(def, user, logAction || "Edit", t.label, modTitle_(def, t, Object.assign({}, row, values)), changes.join("; "));
    }
    return changes;
 }
@@ -330,13 +337,13 @@ function modDelete_(req, user) {
          return { result: "inactivated", uses: uses };
       }
       modRemoveRow_(def, req.table, row);
-      coreLog_(user, def.key, "Delete", t.label, modTitle_(def, t, row), "Not used anywhere, so removed");
+      modLog_(def, user, "Delete", t.label, modTitle_(def, t, row), "Not used anywhere, so removed");
       return { result: "deleted" };
    }
    // Tables marked hardDelete skip Deleted items: the row is removed for good.
    if (t.hardDelete) {
       modRemoveRow_(def, req.table, row);
-      coreLog_(user, def.key, "Delete", t.label, modTitle_(def, t, row), "Removed");
+      modLog_(def, user, "Delete", t.label, modTitle_(def, t, row), "Removed");
       if (def.afterDelete) def.afterDelete(req.table, row, user);
       return { result: "deleted" };
    }
@@ -413,7 +420,7 @@ function modPurge_(req, user) {
    modRemoveRow_(def, req.table, row);
    const desc = coreDescribe_(Object.keys(row).filter(k => k[0] !== "_" && MOD_SYSTEM_COLS.indexOf(k) === -1)
       .reduce((o, k) => { o[k] = row[k]; return o; }, {}));
-   coreLog_(user, def.key, "Delete", t.label, modTitle_(def, t, row), "Permanently deleted. Was: " + desc);
+   modLog_(def, user, "Delete", t.label, modTitle_(def, t, row), "Permanently deleted. Was: " + desc);
    return { purged: true };
 }
 
@@ -439,8 +446,9 @@ function modReply_(req, user, fn) {
    const result = coreWrite_(fn) || {};
    const def = modDefs_()[req.module];
    if (req.reload && def && def.actions && def.actions.load) {
-      CORE_GRID = {}; MOD_ROWS = {};
-      corePrefetch_();
+      // Only what the save changed is read again: writes already dropped their tab from the
+      // per-request cache, and the Core tabs (users, permissions) didn't change.
+      MOD_ROWS = {};
       result.moduleData = def.actions.load.fn(req, user);
    }
    return result;

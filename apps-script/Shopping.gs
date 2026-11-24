@@ -39,9 +39,7 @@ function shoppingDef_() {
                { name: "Category", type: "list", list: "Category" },
                { name: "Urgent", type: "bool", hint: "Need it soon: shows at the top of the list" },
                { name: "Notes", type: "longtext", hint: "Brand, size, flavor..." },
-               { name: "Status", type: "text", readOnly: true },
-               { name: "Bought By", type: "user", readOnly: true },
-               { name: "Bought At", type: "datetime", readOnly: true }
+               { name: "Status", type: "text", readOnly: true }
             ] },
          lists: { tab: "Lists", label: "Dropdown Lists", id: "List Value ID", prefix: "LST-", kind: "list", area: "list",
             unique: ["List", "Value"], title: r => r["List"] + ": " + r["Value"],
@@ -52,6 +50,7 @@ function shoppingDef_() {
             ] }
       },
       lists: ["Store", "Category", "Unit"],
+      quietLog: true,   // item changes don't go to the Change Log (keeps saves quick)
       beforeSave: shoppingBeforeSave_,
       home: shoppingHome_,
       actions: {
@@ -119,7 +118,7 @@ function shoppingCheck_(req, user) {
    if (!coreCan_(user, "shopping", "list", "add")) throw coreError_("FORBIDDEN", "You don't have access to check items off.");
    const row = modFind_(def, "items", req.id);
    if (row["Status"] === "Checked") return { already: true };
-   modChange_(def, "items", row, { "Status": "Checked", "Bought By": user.id, "Bought At": new Date() }, user, "Check off");
+   modChange_(def, "items", row, { "Status": "Checked" }, user, "Check off");
    return { checked: true };
 }
 
@@ -129,7 +128,7 @@ function shoppingUncheck_(req, user) {
    if (!coreCan_(user, "shopping", "list", "add")) throw coreError_("FORBIDDEN", "You don't have access to change the list.");
    const row = modFind_(def, "items", req.id);
    if (row["Status"] !== "Checked") return { already: true };
-   modChange_(def, "items", row, { "Status": "Needed", "Bought By": "", "Bought At": "" }, user, "Uncheck");
+   modChange_(def, "items", row, { "Status": "Needed" }, user, "Uncheck");
    return { unchecked: true };
 }
 
@@ -143,12 +142,12 @@ function shoppingClearChecked_(req, user) {
    const rows = modRows_(def, "items").filter(r => r["Status"] === "Checked" && (!req.ids || want[r["Item ID"]]))
       .sort((a, b) => b._row - a._row);   // bottom up, so row numbers stay right
    rows.forEach(r => modRemoveRow_(def, "items", r));
-   if (rows.length) coreLog_(user, "shopping", "Remove checked", "Items", rows.length + (rows.length === 1 ? " item" : " items"), rows.map(r => r["Item"]).join(", "));
    return { removed: rows.length };
 }
 
-// req: { lines: "Milk\nEggs\n...", store, category, urgent } -> one item per line.
-// Lines already on the list (same name and store) are skipped and named in the reply.
+// req: { items: [{ item, quantity }], store, category, urgent } -> one item per row
+// (or lines: "Milk\nEggs" for one per line). Items already on the list (same name and store)
+// are skipped and named in the reply.
 function shoppingAddMany_(req, user) {
    const def = shoppingDef_();
    if (!coreCan_(user, "shopping", "list", "add")) throw coreError_("FORBIDDEN", "You don't have access to add items.");
@@ -159,20 +158,31 @@ function shoppingAddMany_(req, user) {
       return m.value;
    };
    const store = pick("Store", req.store), category = pick("Category", req.category);
-   const seen = {}, names = [];
-   String(req.lines || "").split(/\r?\n/).map(x => x.replace(/\s+/g, " ").trim()).filter(Boolean).forEach(n => {
-      if (!seen[shoppingKey_(n)]) { seen[shoppingKey_(n)] = true; names.push(n); }
+   const given = Array.isArray(req.items) ? req.items.map(x => ({ item: x && x.item, quantity: x && x.quantity }))
+      : String(req.lines || "").split(/\r?\n/).map(x => ({ item: x }));
+   const seen = {}, wanted = [];
+   given.forEach(x => {
+      const n = String(x.item || "").replace(/\s+/g, " ").trim();
+      if (!n || seen[shoppingKey_(n)]) return;
+      let q = "";
+      if (x.quantity !== undefined && x.quantity !== null && String(x.quantity).trim() !== "") {
+         q = Number(String(x.quantity).trim());
+         if (isNaN(q) || q < 0) throw coreError_("INVALID", "Quantity for " + n + " must be a number.");
+      }
+      seen[shoppingKey_(n)] = true;
+      wanted.push({ name: n, qty: q });
    });
-   if (!names.length) throw coreError_("INVALID", "Type at least one item, one per line.");
-   if (names.length > 100) throw coreError_("INVALID", "That's more than 100 lines. Add them in smaller batches.");
+   const names = wanted.map(w => w.name);
+   if (!names.length) throw coreError_("INVALID", "Type at least one item.");
+   if (names.length > 100) throw coreError_("INVALID", "That's more than 100 items. Add them in smaller batches.");
    const onList = modRows_(def, "items").filter(shoppingNeeded_);
    const skipped = [], rows = [];
-   names.forEach(n => {
+   wanted.forEach(w => {
+      const n = w.name;
       if (onList.some(r => shoppingKey_(r["Item"]) === shoppingKey_(n) && shoppingSameStore_(r["Store"], store))) { skipped.push(n); return; }
-      rows.push({ "Item": n, "Store": store, "Category": category, "Urgent": req.urgent === true, "Status": "Needed" });
+      rows.push({ "Item": n, "Quantity": w.qty, "Store": store, "Category": category, "Urgent": req.urgent === true, "Status": "Needed" });
    });
    const ids = modBulkInsert_(def, "items", rows, user);
-   if (ids.length) coreLog_(user, "shopping", "Add several", "Items", ids.length + (ids.length === 1 ? " item" : " items"), rows.map(r => r["Item"]).join(", "));
    return { added: ids.length, skipped: skipped };
 }
 

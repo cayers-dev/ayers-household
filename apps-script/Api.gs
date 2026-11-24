@@ -696,7 +696,8 @@ function coreDate_(iso) {
 function coreBatchRead_(ss, names, dateCols) {
    if (typeof Sheets === "undefined") return false;
    try {
-      const sheets = names.map(n => ss.getSheetByName(n)).filter(Boolean);
+      // Tabs already read in this request (and not written since) aren't read again.
+      const sheets = names.map(n => ss.getSheetByName(n)).filter(sh => sh && !CORE_GRID[coreGridKey_(sh)]);
       if (!sheets.length) return true;
       const res = Sheets.Spreadsheets.Values.batchGet(ss.getId(), {
          ranges: sheets.map(sh => "'" + sh.getName().replace(/'/g, "''") + "'"),
@@ -752,15 +753,23 @@ function coreWriteChanges_(sheet, row, before, values) {
       if (v === undefined || v === null) return "";
       return String(v).replace(/T00:00$/, "");
    };
-   const changes = [];
+   const changes = [], cells = {};
    Object.keys(values).forEach(h => {
       const c = hm.map[h.toLowerCase()];
       if (!c) return;
       const oldV = show(before[h]), newV = show(values[h]);
       if (oldV === newV) return;
-      sheet.getRange(row, c).setValue(values[h] === "" ? "" : values[h]);
+      cells[c] = values[h] === undefined || values[h] === null ? "" : values[h];
       changes.push(h + ": " + (oldV || "(blank)") + " → " + (newV || "(blank)"));
    });
+   // One write per run of side-by-side columns (instead of one per cell).
+   const cols = Object.keys(cells).map(Number).sort((a, b) => a - b);
+   for (let i = 0; i < cols.length;) {
+      let j = i;
+      while (j + 1 < cols.length && cols[j + 1] === cols[j] + 1) j++;
+      sheet.getRange(row, cols[i], 1, j - i + 1).setValues([cols.slice(i, j + 1).map(c => cells[c])]);
+      i = j + 1;
+   }
    if (changes.length) delete CORE_GRID[coreGridKey_(sheet)];
    return changes;
 }
