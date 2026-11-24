@@ -300,10 +300,12 @@
     const prev = isoDay(new Date(y, m - 2, 1)).slice(0, 7), next = isoDay(new Date(y, m, 1)).slice(0, 7);
     const items = d.plan.filter(p => String(p["Date"]).slice(0, 7) === month);
     const price = p => { const c = choreById(p["Chore ID"]); return c ? Number(c["Amount"]) : 0; };
-    const plannedTotal = items.reduce((s, p) => s + price(p), 0);
-    const doneTotal = items.filter(p => p["Status"] === "Done").reduce((s, p) => s + price(p), 0);
+    // Earned this month counts toward the month; planned = chores not yet done (done ones are in earned).
+    const earned = (d.earnings || []).filter(e => String(e["Date"]).slice(0, 7) === month).reduce((s, e) => s + (Number(e["Amount"]) || 0), 0);
+    const plannedTotal = items.filter(p => p["Status"] !== "Done").reduce((s, p) => s + price(p), 0);
     const required = d.months ? ((d.months.find(x => x.start.slice(0, 7) === month) || {}).toEarn || 0)
       : (d.weeks || []).filter(w => w.start.slice(0, 7) === month).reduce((s, w) => s + w.weeklyRequired, 0);
+    const toPlan = required - earned - plannedTotal;
     const canPlan = M.tableCan(ctx, "plan", "add");
     let list = "";
     for (let i = 1; i <= days; i++) {
@@ -327,10 +329,11 @@
         '<a class="icon-btn" href="#/hockey/plan/' + next + '" aria-label="Next month">' + ICONS.next + '</a></div>' +
       '<div class="card hk-kv hk-plan-sum">' +
         '<div><span>Month required</span><b>' + money(required) + '</b></div>' +
-        '<div><span>Planned</span><b>' + money(plannedTotal) + '</b></div>' +
-        '<div><span>Difference</span><b class="' + (plannedTotal - required < -0.005 ? "neg" : "pos") + '">' + money(plannedTotal - required) + '</b></div>' +
-        '<div><span>Done so far</span><b>' + money(doneTotal) + '</b></div></div>' +
-      '<p class="hint" style="margin:8px 4px">Tap a planned chore to log it as done. Prices shown are today’s chore prices.</p>' +
+        '<div><span>Earned this month</span><b>' + money(earned) + '</b></div>' +
+        '<div><span>Planned (not done)</span><b>' + money(plannedTotal) + '</b></div>' +
+        '<div><span>' + (toPlan > 0.005 ? "Still to plan" : "Covered") + '</span><b class="' + (toPlan > 0.005 ? "neg" : "pos") + '">' +
+          (toPlan > 0.005 ? money(toPlan) : toPlan < -0.005 ? money(-toPlan) + " over" : "On target") + '</b></div></div>' +
+      '<p class="hint" style="margin:8px 4px">Still to plan = month required − earned this month − planned chores not yet done. Tap a planned chore to log it as done. Prices shown are today’s chore prices.</p>' +
       '<div class="card hk-days">' + list + '</div>';
     return { title: "Chore plan", back: true, html: html, keepScroll: true };
   }
