@@ -849,7 +849,8 @@ function finFile_(req, user) {
 // Setup (run once from the script editor; safe to run again: only adds what's missing).
 // Links the spreadsheet, turns the module on, builds the tabs, fills the dropdowns, adds the
 // Reports area (and names the Bills area "Upcoming & Bills"), and adds "Financial" to the
-// Tasks categories. No bills, income or history are copied in (that's a separate import, later).
+// Tasks categories, and makes Brittany an Editor on Financial if she has no Financial role yet.
+// No bills, income or history are copied in (that's a separate import, later).
 // ------------------------------------------------------------
 const FIN_SEED = {
    "Group": [["Expenses", 1], ["Non-Essential", 2], ["Savings", 3]],
@@ -890,6 +891,14 @@ function financialSetup() {
    if (finTasksOn_()) {
       const td = tasksDef_();
       if (!modListValues_(td, "Category").some(v => v.value === "Financial")) { modBulkInsert_(td, "lists", [{ "List": "Category", "Value": "Financial", "Sort": "" }], owner); out.push("Tasks category added: Financial"); }
+   }
+   // Brittany: Editor on all of Financial (answer of 11/24), unless a Financial role is already set for her.
+   CORE_PERMS = null; CORE_GRID = {};
+   if (!coreGetPerms_().some(p => p.userId === "USR-2" && p.module === "financial" && !p.area) && coreGetUsers_(true).some(u => u.id === "USR-2")) {
+      coreAppendRow_(coreSheet_(CORE_CONFIG.tabs.perms), { "User ID": "USR-2", "Module Key": "financial", "Area Key": "", "Role": "Editor" });
+      coreLog_(owner, "core", "Permissions", "Brittany Ayers", "Financial", "Role: Editor", true);
+      CORE_PERMS = null; CORE_GRID = {};
+      out.push("Brittany set to Editor");
    }
    const perms = coreGetPerms_().filter(p => p.module === "financial").map(p => p.userId + (p.area ? "/" + p.area : "") + "=" + p.role);
    out.push("Access: " + (perms.join(", ") || "admins only"));
