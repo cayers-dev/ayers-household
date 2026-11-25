@@ -29,9 +29,10 @@ Mobile web app for the Ayers household: vehicles, travel hockey, inventory, fina
 | `Shopping.gs` | Shopping List: items, check off, remove checked, add several at once. `shoppingSetup()`. |
 | `Tasks.gs` | Tasks: per-person and household tasks, status list, checklists, repeats, Home ▸ My tasks, tasks from other modules (Vehicles follow-ups). `tasksSetup()`. |
 | `TasksGoogle.gs` | Two-way sync between a person's tasks and their Google Tasks (My Tasks): connect once, app changes sent at once, Google changes pulled on open / Sync now. Needs the Tasks API on and the client secret saved (Tasks ▸ Set up). |
+| `Financial.gs` | Financial: bills and income (default amount + frequency; entries made 3 months ahead, Paid / Received automatically on autopay), reminder tasks, loans (balance, payoff estimate, shown on the vehicle), accounts (last 4 digits only), Plan / Save For (options with cost lines), the yearly month grid, statements in Drive, sending a paid bill to Travel Hockey. `financialSetup()`. |
 | `Vehicles.gs` | Vehicles: vehicles, features, plates, places, service visits and lines, odometer, intervals (due dates, mileage estimates), insurance policies and cards, registrations, files in Drive, Due Soon. `vehiclesSetup()`. |
 
-Front-end files: `app.js` (core), `modules.js` (shared module screens: forms, list managers, deleted items), `hockey.js` (Travel Hockey screens), `shopping.js` (Shopping List), `vehicles.js` (Vehicles), `tasks.js` (Tasks).
+Front-end files: `app.js` (core), `modules.js` (shared module screens: forms, list managers, deleted items), `hockey.js` (Travel Hockey screens), `shopping.js` (Shopping List), `vehicles.js` (Vehicles), `tasks.js` (Tasks), `financial.js` (Financial).
 
 ## Modules
 
@@ -40,7 +41,7 @@ Front-end files: `app.js` (core), `modules.js` (shared module screens: forms, li
 | vehicles | Vehicles | Active (spreadsheet "Ayers Household - Vehicles") |
 | hockey | Travel Hockey | Active (spreadsheet "Ayers Household - Travel Hockey") |
 | inventory | Inventory | Coming soon |
-| financial | Financial | Coming soon |
+| financial | Financial | Active (spreadsheet "Ayers Household - Financial"); not shared with anyone |
 | tasks | Tasks | Active (spreadsheet "Ayers Household - Tasks"); with Google Tasks sync |
 | work | Work | Coming soon |
 | home | Home Maintenance & Projects | Coming soon |

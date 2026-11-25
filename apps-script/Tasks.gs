@@ -14,7 +14,8 @@
 // "[x] " in front of the done ones.
 //
 // Other modules add tasks through tasksUpsertAuto_ (a Source Key ties the task to where it came from;
-// e.g. a Vehicles follow-up becomes a task for the vehicle's primary driver).
+// e.g. a Vehicles follow-up becomes a task for the vehicle's primary driver; a Financial bill with
+// "Reminder task" ticked gets a task per payment, and ticking it done marks the payment paid).
 // Google Tasks sync comes next ("Send to Google" is kept ready for it).
 // Run tasksSetup() once from the script editor.
 // =========================================================
@@ -160,6 +161,9 @@ function tasksAfterDone_(def, row, user) {
    const key = String(row["Source Key"] || "");
    if (/^vehicles:/.test(key) && typeof vehFollowUpDone_ === "function") {
       try { vehFollowUpDone_(key.slice(9), true, user); } catch (e) { console.warn("Vehicles follow-up not updated: " + e); }
+   }
+   if (/^financial:/.test(key) && typeof finTaskDone_ === "function") {
+      try { finTaskDone_(key.slice(10), user); } catch (e) { console.warn("Financial entry not updated: " + e); }
    }
 }
 

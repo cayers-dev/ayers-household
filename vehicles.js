@@ -362,11 +362,20 @@
     return (edit ? '<div class="actions" style="margin:0 0 4px">' + edit + '</div>' : "") +
       (basics ? section("Basics", basics) : "") + (buy ? section("Purchase", buy) : "") + (specs ? section("Specs", specs) : "") +
       section("Features", featHtml, can("vehicles", "edit", v) ? '<button class="link-btn" data-vh="features" data-id="' + esc(vid) + '">Edit</button>' : "") +
+      loansHtml(vid) +
       section("Parts", partsHtml(vid), can("parts", "add") ? '<button class="link-btn" data-vh="add-part" data-id="' + esc(vid) + '">+ Add</button>' : "") +
       section("License plates", plateHtml, can("plates", "add") ? '<button class="link-btn" data-vh="add-plate" data-id="' + esc(vid) + '">+ Add</button>' : "") +
       (v["Notes"] ? section("Notes", '<div class="card"><div class="vh-notes">' + esc(v["Notes"]) + '</div></div>') : "");
   }
 
+  // Loans on this vehicle (Financial; only sent to people who can see Financial ▸ Loans).
+  function loansHtml(vid) {
+    const ls = (D().loans || {})[vid] || [];
+    if (!ls.length) return "";
+    const payoff = l => l.basis === "done" ? "Paid off" : l.payoff ? "Paid off about " + new Date(+l.payoff.slice(0, 4), +l.payoff.slice(5, 7) - 1, 1).toLocaleDateString(undefined, { month: "short", year: "numeric" }) : "";
+    return section("Loan", '<div class="card list">' + ls.map(l => '<a class="list-item" href="#/financial/loan/' + encodeURIComponent(l.id) + '"><div class="body"><div class="title">' + esc(l.name) + '</div>' +
+      '<div class="sub">' + esc([M.money(l.remaining) + " left", l.monthly ? M.money(l.monthly) + " / mo" : "", payoff(l)].filter(Boolean).join(" · ")) + '</div></div><span class="thumb">' + ICONS.next + '</span></a>').join("") + '</div>');
+  }
   function partsHtml(vid) {
     const ps = rows("parts").filter(p => p["Vehicle ID"] === vid).sort((a, b) => String(a["Part"]).localeCompare(String(b["Part"])));
     return '<div class="card list">' + (ps.map(p => '<div class="list-item" role="button" tabindex="0" data-mod-edit="parts" data-id="' + esc(p["Part ID"]) + '"><div class="body"><div class="title">' + esc(p["Part"]) + '</div>' +

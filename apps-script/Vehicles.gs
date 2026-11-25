@@ -404,8 +404,10 @@ function vehiclesLoad_(req, user) {
       vfeatures: see("vehicles") ? modRows_(def, "vfeatures") : [], plates: see("vehicles") ? modRows_(def, "plates") : [],
       parts: see("vehicles") ? modRows_(def, "parts") : [],
       visits: [], lines: [], odometer: [], intervals: [], policies: [], cards: [], registrations: [],
-      status: {}, current: {}, today: vehToday_()
+      status: {}, current: {}, today: vehToday_(), loans: {}
    };
+   // Loans on each vehicle (Financial), only for people who can see Financial ▸ Loans.
+   if (typeof finVehicleLoans_ === "function") { try { out.loans = finVehicleLoans_(user); } catch (e) { console.warn("Vehicle loans: " + e); } }
    const days = Number(user.dueSoonDays) || Number(coreGetSettings_()["Due Soon Days (default)"]) || 30;
    if (see("service")) {
       ["visits", "lines", "odometer", "intervals"].forEach(k => out[k] = modRows_(def, k));

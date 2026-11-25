@@ -1,0 +1,904 @@
+// =========================================================
+// AYERS HOUSEHOLD - FINANCIAL MODULE
+// =========================================================
+// Data lives in the "Ayers Household - Financial" spreadsheet (Financial folder). It isn't shared
+// with anyone: the app reads it as Chris (the web app runs as its owner), so only people with
+// Financial access in the app ever see it.
+//
+// Areas (set per person on Permissions):
+//   bills     Upcoming & Bills: bills (Expenses / Non-Essential / Savings lines), their entries
+//   income    income sources and their entries
+//   loans     loans, extra payments / adjustments, payoff
+//   accounts  institutions, nicknames, last 4 digits, optional balances
+//   plans     Plan / Save For goals, options compared, cost lines
+//   reports   the month grid and spending from other modules
+//
+// A bill or income source has a default amount and a frequency. Entries (one per due date) are
+// made ahead of time as Scheduled: through 3 months from today, plus the next one for anything
+// billed less often. On its due date an entry turns Paid (autopay / received automatically) or
+// Due / Expected (marked by hand). Past and paid entries never change when a default changes.
+// A bill with "Reminder task" ticked gets a task (Tasks module) for each unpaid entry.
+// Loans: each Paid entry of a bill linked to the loan lowers its balance by the full payment;
+// extra payments and adjustments are logged on the loan.
+// Run financialSetup() once from the script editor.
+// =========================================================
+
+const FIN_SPREADSHEET_ID = "1U5lWObFoaHHqvocMrItOFdjUdJ-JSkwyXeB6gaFP2JY";
+const FIN_FOLDERS = {
+   entries: { id: "1agapalEILSsj3qHxRY7Ht5WpjU5C5bgH", label: "Statement" }
+};
+const FIN_AREAS = ["bills", "income", "loans", "accounts", "plans", "reports"];
+const FIN_FREQ = ["Weekly", "Every 2 weeks", "Twice a month", "Monthly", "Every 2 months", "Quarterly", "Every 6 months", "Annually", "Every N months", "One-time"];
+const FIN_AHEAD_MONTHS = 3;
+const FIN_SYNC_SECONDS = 600;
+// Bills and income work the same way; these name the parts that differ.
+const FIN_KINDS = {
+   bills:  { items: "bills",  entries: "entries",  id: "Bill ID",   paid: "Paid",     open: "Due" },
+   income: { items: "income", entries: "deposits", id: "Income ID", paid: "Received", open: "Expected" }
+};
+const FIN_SCHEDULE_FIELDS = ["Frequency", "Every N Months", "Start Date", "Second Day", "End Date"];
+
+function financialDef_() {
+   const scheduleFields = [
+      { name: "Amount", type: "money", required: true, hint: "Default amount for each one" },
+      { name: "Frequency", type: "choice", options: FIN_FREQ, required: true, default: "Monthly" },
+      { name: "Every N Months", type: "number", hint: "Only for “Every N months”" },
+      { name: "Start Date", label: "First Due Date", type: "date", required: true, hint: "Sets the day it's due (e.g. the 15th)" },
+      { name: "Second Day", label: "Second Due Day", type: "number", hint: "Only for “Twice a month”, e.g. 15" },
+      { name: "End Date", label: "Last Due Date", type: "date", hint: "Blank = keeps going" }
+   ];
+   const entryFields = (ref, refLabel, statuses, dateLabel, paidLabel) => [
+      { name: ref, label: refLabel, type: "ref", ref: ref === "Bill ID" ? "bills" : "income", required: true },
+      { name: "Due Date", label: dateLabel, type: "date", required: true },
+      { name: "Amount", type: "money", required: true },
+      { name: "Status", type: "choice", options: statuses, required: true, default: statuses[1] },
+      { name: "Paid Date", label: paidLabel, type: "date" }
+   ];
+   return {
+      key: "financial",
+      name: "Financial",
+      areas: FIN_AREAS,
+      tables: {
+         bills: { tab: "Bills", label: "Bills", id: "Bill ID", prefix: "BIL-", kind: "record", area: "bills",
+            title: r => r["Name"],
+            fields: [
+               { name: "Name", type: "text", required: true, hint: "e.g. AT&T (Cell Phone Service)" },
+               { name: "Group", type: "list", list: "Group", required: true, default: "Expenses" },
+               { name: "Category", type: "list", list: "Category" }
+            ].concat(scheduleFields).concat([
+               { name: "Autopay", type: "bool", hint: "Marks itself paid on the due date" },
+               { name: "Paid By", type: "list", list: "Person", default: "Chris" },
+               { name: "Account ID", label: "Paid From", type: "ref", ref: "accounts" },
+               { name: "Loan ID", label: "Loan", type: "ref", ref: "loans", hint: "Payments lower this loan's balance" },
+               { name: "Plan ID", label: "Saving Toward", type: "ref", ref: "plans", hint: "Payments add to this goal's saved amount" },
+               { name: "Reminder", label: "Reminder task", type: "bool", hint: "A task for each payment (Tasks)" },
+               { name: "Reminder To", type: "user", default: "USR-1" },
+               { name: "Reminder Days", label: "Days before due", type: "number", default: 3 },
+               { name: "Notes", type: "longtext" }
+            ]) },
+         income: { tab: "Income", label: "Income", id: "Income ID", prefix: "INC-", kind: "record", area: "income",
+            title: r => r["Name"],
+            fields: [
+               { name: "Name", label: "Source", type: "text", required: true, hint: "e.g. CVUSD – Chris" }
+            ].concat(scheduleFields).concat([
+               { name: "Autopay", label: "Received automatically", type: "bool", hint: "Direct deposit: marks itself received on the date" },
+               { name: "Account ID", label: "Deposited To", type: "ref", ref: "accounts" },
+               { name: "Notes", type: "longtext" }
+            ]) },
+         entries: { tab: "Bill Entries", label: "Bill Entries", id: "Entry ID", prefix: "PAY-", kind: "record", area: "bills",
+            title: (r, def) => finItemName_(def, "bills", r["Bill ID"]) + " " + vehNiceDate_(finIso_(r["Due Date"])),
+            fields: entryFields("Bill ID", "Bill", ["Scheduled", "Due", "Paid", "Skipped"], "Due Date", "Paid Date").concat([
+               { name: "Confirmation", type: "text" },
+               { name: "Statement", label: "Statement / confirmation", type: "file" },
+               { name: "Notes", type: "longtext" },
+               { name: "Scheduled For", type: "date", readOnly: true },
+               { name: "Reminder Task", type: "text", readOnly: true },
+               { name: "Hockey Expense ID", type: "text", readOnly: true }
+            ]) },
+         deposits: { tab: "Income Entries", label: "Income Entries", id: "Entry ID", prefix: "DEP-", kind: "record", area: "income",
+            title: (r, def) => finItemName_(def, "income", r["Income ID"]) + " " + vehNiceDate_(finIso_(r["Due Date"])),
+            fields: entryFields("Income ID", "Income", ["Scheduled", "Expected", "Received", "Skipped"], "Expected Date", "Received Date").concat([
+               { name: "Notes", type: "longtext" },
+               { name: "Scheduled For", type: "date", readOnly: true }
+            ]) },
+         loans: { tab: "Loans", label: "Loans", id: "Loan ID", prefix: "LN-", kind: "record", area: "loans",
+            title: r => r["Name"],
+            fields: [
+               { name: "Name", type: "text", required: true, hint: "e.g. Nissan (Rogue)" },
+               { name: "Lender", type: "text" },
+               { name: "Starting Balance", type: "money", required: true },
+               { name: "Balance Date", label: "Balance as of", type: "date", required: true },
+               { name: "Interest Rate", label: "Interest rate (APR %)", type: "percent", hint: "Optional: used for the payoff estimate" },
+               { name: "Vehicle ID", label: "Vehicle", type: "text", hint: "Shows the loan on that vehicle (for people who can see Loans)" },
+               { name: "Account ID", label: "Account", type: "ref", ref: "accounts" },
+               { name: "Paid Off Date", type: "date" },
+               { name: "Remaining", label: "Remaining balance", type: "money", readOnly: true },
+               { name: "Notes", type: "longtext" }
+            ] },
+         loanpays: { tab: "Loan Payments", label: "Loan Payments", id: "Loan Payment ID", prefix: "LNP-", kind: "record", area: "loans",
+            title: r => r["Kind"] + " " + vehNiceDate_(finIso_(r["Date"])),
+            fields: [
+               { name: "Loan ID", label: "Loan", type: "ref", ref: "loans", required: true },
+               { name: "Date", type: "date", required: true },
+               { name: "Kind", type: "choice", options: ["Extra payment", "Adjustment"], required: true, default: "Extra payment" },
+               { name: "Amount", type: "money", required: true, hint: "Lowers the balance. For an adjustment, a negative amount raises it (fees, interest)." },
+               { name: "Notes", type: "text" }
+            ] },
+         accounts: { tab: "Accounts", label: "Accounts", id: "Account ID", prefix: "ACC-", kind: "list", area: "accounts",
+            unique: ["Nickname"], title: r => r["Nickname"],
+            fields: [
+               { name: "Nickname", type: "text", required: true, hint: "e.g. Capital One (Chris)" },
+               { name: "Institution", type: "text" },
+               { name: "Kind", type: "choice", options: ["Checking", "Savings", "Credit Card", "Loan", "Retirement", "Other"], required: true, default: "Checking" },
+               { name: "Owner", type: "list", list: "Person" },
+               { name: "Card Last 4", label: "Card – last 4 digits", type: "text" },
+               { name: "Account Last 4", label: "Account – last 4 digits", type: "text" },
+               { name: "Website", type: "url" },
+               { name: "Balance", type: "money", hint: "Optional, typed in by hand" },
+               { name: "Balance Date", label: "Balance as of", type: "date" },
+               { name: "Notes", type: "longtext", hint: "No full account numbers or passwords" }
+            ] },
+         plans: { tab: "Plans", label: "Plan / Save For", id: "Plan ID", prefix: "PLN-", kind: "record", area: "plans",
+            title: r => r["Goal"],
+            fields: [
+               { name: "Goal", type: "text", required: true, hint: "e.g. Disneyland passes" },
+               { name: "Target Amount", type: "money", hint: "Blank = the chosen option's total" },
+               { name: "Target Date", type: "date" },
+               { name: "Starting Saved", label: "Saved before tracking", type: "money" },
+               { name: "Monthly Contribution", type: "money" },
+               { name: "Status", type: "choice", options: ["Active", "Reached", "Cancelled"], required: true, default: "Active" },
+               { name: "Notes", type: "longtext" }
+            ] },
+         options: { tab: "Plan Options", label: "Plan Options", id: "Option ID", prefix: "OPT-", kind: "record", area: "plans", hardDelete: true,
+            title: r => r["Option"],
+            fields: [
+               { name: "Plan ID", label: "Plan", type: "ref", ref: "plans", required: true },
+               { name: "Option", type: "text", required: true, hint: "e.g. Signature (1) Deluxe (4)" },
+               { name: "Chosen", type: "bool" },
+               { name: "Total", type: "money", readOnly: true },
+               { name: "Notes", type: "longtext" }
+            ] },
+         optlines: { tab: "Option Lines", label: "Option Lines", id: "Line ID", prefix: "OPL-", kind: "record", area: "plans", hardDelete: true,
+            title: r => r["Item"],
+            fields: [
+               { name: "Option ID", label: "Option", type: "ref", ref: "options", required: true },
+               { name: "Item", type: "text", required: true },
+               { name: "Price", type: "money" },
+               { name: "Quantity", type: "number", default: 1 },
+               { name: "Sort", type: "number" }
+            ] },
+         lists: { tab: "Lists", label: "Dropdown Lists", id: "List Value ID", prefix: "LST-", kind: "list", area: "bills",
+            unique: ["List", "Value"], title: r => r["List"] + ": " + r["Value"],
+            fields: [
+               { name: "List", type: "text", required: true },
+               { name: "Value", type: "text", required: true },
+               { name: "Sort", type: "number" }
+            ] }
+      },
+      lists: ["Group", "Category", "Person"],
+      beforeSave: finBeforeSave_,
+      afterSave: finAfterSave_,
+      afterDelete: finAfterDelete_,
+      actions: {
+         load:        { fn: finLoad_ },
+         report:      { fn: finReportAction_ },
+         file:        { fn: finFile_ },
+         mark:        { fn: finMark_, write: true },
+         setDays:     { fn: finSetDays_, write: true },
+         upload:      { fn: finUpload_, write: true },
+         clearFile:   { fn: finClearFile_, write: true },
+         saveOption:  { fn: finSaveOption_, write: true },
+         toHockey:    { fn: finToHockey_, write: true },
+         sync:        { fn: finSyncAction_, write: true }
+      }
+   };
+}
+
+// ------------------------------------------------------------
+// Small helpers
+// ------------------------------------------------------------
+const finIso_ = v => vehIso_(v);
+const finRound_ = n => Math.round((Number(n) || 0) * 100) / 100;
+const finMoney_ = n => "$" + finRound_(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+const finKindOfEntries_ = table => table === "deposits" ? FIN_KINDS.income : FIN_KINDS.bills;
+const finUnpaid_ = e => e["Status"] === "Scheduled" || e["Status"] === "Due" || e["Status"] === "Expected";
+function finItemName_(def, table, id) { const r = vehFind_(def, table, id); return r ? r["Name"] : id || ""; }
+function finTasksOn_() { return typeof tasksActive_ === "function" && tasksActive_(); }
+function finActive_() {
+   const m = coreModules_().find(x => x.key === "financial");
+   return !!(m && m.status === "Active" && m.spreadsheetId);
+}
+// Writes the app makes on its own (schedules, status on the due date): no Change Log line each.
+function finSys_(def, table, row, values) {
+   coreWriteChanges_(modSheet_(def, def.tables[table]), row._row, row, Object.assign({}, values, { "Updated At": new Date() }));
+}
+
+// ------------------------------------------------------------
+// Schedules
+// ------------------------------------------------------------
+function finStepMonths_(it) {
+   switch (it["Frequency"]) {
+      case "Monthly": return 1;
+      case "Every 2 months": return 2;
+      case "Quarterly": return 3;
+      case "Every 6 months": return 6;
+      case "Annually": return 12;
+      case "Every N months": return Math.max(1, Math.round(Number(it["Every N Months"]) || 1));
+   }
+   return 0;
+}
+// How many times a month it comes round (for loan payments and the plan contribution).
+function finPerMonth_(it) {
+   switch (it["Frequency"]) {
+      case "Weekly": return 52 / 12;
+      case "Every 2 weeks": return 26 / 12;
+      case "Twice a month": return 2;
+      case "One-time": return 0;
+   }
+   const s = finStepMonths_(it);
+   return s ? 1 / s : 0;
+}
+// Calls fn(date) for each due date in order, from the first, until fn returns false.
+function finEach_(it, fn) {
+   const start = finIso_(it["Start Date"]);
+   if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) return;
+   const end = finIso_(it["End Date"]) || "9999-12-31";
+   const f = it["Frequency"];
+   const go = d => d <= end && fn(d) !== false;
+   if (f === "One-time") { go(start); return; }
+   if (f === "Weekly" || f === "Every 2 weeks") {
+      const step = f === "Weekly" ? 7 : 14;
+      for (let k = 0; k < 6000; k++) if (!go(vehAddDays_(start, k * step))) return;
+      return;
+   }
+   if (f === "Twice a month") {
+      const d1 = +start.slice(8, 10), d2 = Math.round(Number(it["Second Day"]) || 0);
+      for (let k = 0; k < 2400; k++) {
+         const first = vehAddMonths_(start.slice(0, 8) + "01", k);
+         const last = new Date(Date.UTC(+first.slice(0, 4), +first.slice(5, 7), 0)).getUTCDate();
+         const days = [d1].concat(d2 >= 1 && d2 <= 31 ? [d2] : []).map(x => Math.min(x, last))
+            .filter((x, i, a) => a.indexOf(x) === i).sort((a, b) => a - b);
+         for (let i = 0; i < days.length; i++) {
+            const d = first.slice(0, 8) + String(days[i]).padStart(2, "0");
+            if (d < start) continue;
+            if (!go(d)) return;
+         }
+      }
+      return;
+   }
+   const step = finStepMonths_(it) || 1;
+   for (let k = 0; k < 2400; k++) if (!go(vehAddMonths_(start, k * step))) return;
+}
+// Days after the last entry that already happened before a new one can fall (most of a period, so a
+// changed due day doesn't bill the same month twice).
+function finMinGap_(it) {
+   const f = it["Frequency"];
+   if (f === "One-time") return 100000;
+   if (f === "Twice a month") return 1;
+   const days = f === "Weekly" ? 7 : f === "Every 2 weeks" ? 14 : (finStepMonths_(it) || 1) * 30.44;
+   return Math.max(1, Math.floor(days * 0.8));
+}
+function finOccurrences_(it, from, to) {
+   const out = [];
+   finEach_(it, d => { if (d > to) return false; if (d >= from) out.push(d); });
+   return out;
+}
+function finNextAfter_(it, after) {
+   let next = "";
+   finEach_(it, d => { if (d > after) { next = d; return false; } });
+   return next;
+}
+// Entries are made from the first of the month the bill was added (or its first due date, if later):
+// adding a long-running bill doesn't fill in years of history. (Old history comes in by import.)
+function finTrackFrom_(it) {
+   const start = finIso_(it["Start Date"]);
+   if (!start) return "";
+   const added = String(it["Added At"] || "").slice(0, 7);
+   const from = /^\d{4}-\d{2}$/.test(added) ? added + "-01" : start;
+   return start > from ? start : from;
+}
+
+// Makes the missing entries for bills or income (all, or one item) and turns Scheduled entries
+// whose date has come into Paid / Received (automatic) or Due / Expected. Returns the entry IDs touched.
+function finSyncKind_(def, kind, user, onlyId) {
+   const K = FIN_KINDS[kind];
+   const today = vehToday_(), horizon = vehAddMonths_(today, FIN_AHEAD_MONTHS);
+   const items = modRows_(def, K.items).filter(it => !onlyId || it[K.id] === onlyId);
+   const have = {}, kept = {};
+   modRows_(def, K.entries, true).forEach(e => {
+      const d = finIso_(e["Scheduled For"]) || finIso_(e["Due Date"]);
+      have[e[K.id] + "|" + d] = true;
+      // Entries that already happened (paid, due, skipped) end the old schedule: a changed schedule
+      // picks up after the latest of them (see finMinGap_), so a month isn't billed twice.
+      if (e["Status"] !== "Scheduled" && (!kept[e[K.id]] || d > kept[e[K.id]])) kept[e[K.id]] = d;
+   });
+   const add = [];
+   items.forEach(it => {
+      let from = finTrackFrom_(it);
+      if (!from) return;
+      if (kept[it[K.id]]) { const next = vehAddDays_(kept[it[K.id]], finMinGap_(it)); if (next > from) from = next; }
+      const dates = finOccurrences_(it, from, horizon);
+      if (!dates.some(d => d > today)) { const nx = finNextAfter_(it, today > horizon ? today : horizon); if (nx) dates.push(nx); }
+      const auto = it["Autopay"] === true;
+      dates.forEach(d => {
+         const k = it[K.id] + "|" + d;
+         if (have[k]) return;
+         have[k] = true;
+         const past = d <= today;
+         add.push({ [K.id]: it[K.id], "Due Date": coreDate_(d), "Scheduled For": coreDate_(d), "Amount": finRound_(it["Amount"]),
+                    "Status": past ? (auto ? K.paid : K.open) : "Scheduled", "Paid Date": past && auto ? coreDate_(d) : "" });
+      });
+   });
+   const touched = add.length ? modBulkInsert_(def, K.entries, add, user) : [];
+   const byId = {};
+   modRows_(def, K.items, true).forEach(it => byId[it[K.id]] = it);
+   let flipped = 0;
+   modRows_(def, K.entries).forEach(e => {
+      if (e["Status"] !== "Scheduled" || !e["Due Date"] || e["Due Date"] > today || (onlyId && e[K.id] !== onlyId)) return;
+      const it = byId[e[K.id]], auto = !!(it && it["Autopay"] === true);
+      finSys_(def, K.entries, e, auto ? { "Status": K.paid, "Paid Date": coreDate_(e["Due Date"]) } : { "Status": K.open });
+      touched.push(e["Entry ID"]); flipped++;
+   });
+   if (flipped) modForget_(def, K.entries);
+   if (add.length) modLog_(def, user, "Add", def.tables[K.entries].label, onlyId ? modTitle_(def, def.tables[K.items], byId[onlyId] || {}) : "Schedule", add.length + (add.length === 1 ? " entry" : " entries") + " scheduled");
+   return touched;
+}
+
+// Takes off a bill's or income's entries that haven't happened yet (Scheduled; with includeOpen also
+// Due / Expected), so the schedule can be made again. Their reminder tasks come off the task list.
+function finClearUpcoming_(def, kind, itemId, user, includeOpen) {
+   const K = FIN_KINDS[kind];
+   const gone = modRows_(def, K.entries, true).filter(e => e[K.id] === itemId && !e["Deleted"] &&
+      (e["Status"] === "Scheduled" || (includeOpen && e["Status"] === K.open))).sort((a, b) => b._row - a._row);
+   gone.forEach(e => {
+      if (kind === "bills" && e["Reminder Task"] && finTasksOn_()) { try { tasksUpsertAuto_("financial:" + e["Entry ID"], null, user); } catch (err) { console.warn(err); } }
+      modRemoveRow_(def, K.entries, e);
+   });
+   return gone.length;
+}
+
+// Everything due: entries for every bill and income source, reminder tasks, loan balances.
+function finSyncAll_(def, user) {
+   const billIds = finSyncKind_(def, "bills", user);
+   finSyncKind_(def, "income", user);
+   finRemind_(def, billIds, user);
+   finUpdateLoans_(def);
+}
+// Load runs the schedule at most every 10 minutes (and always after a bill or income change).
+function finMaybeSync_(def, user) {
+   const cache = CacheService.getScriptCache(), key = "fin_sync_" + vehToday_();
+   if (cache.get(key)) return;
+   coreWrite_(() => finSyncAll_(def, user));
+   cache.put(key, "1", FIN_SYNC_SECONDS);
+   MOD_ROWS = {};
+}
+function finSyncAction_(req, user) {
+   coreRequire_(user, "financial", "bills", "view");
+   finSyncAll_(financialDef_(), user);
+   CacheService.getScriptCache().put("fin_sync_" + vehToday_(), "1", FIN_SYNC_SECONDS);
+   return { synced: true };
+}
+
+// ------------------------------------------------------------
+// Reminder tasks (Tasks module): one per unpaid entry of a bill with "Reminder task" ticked
+// ------------------------------------------------------------
+function finReminder_(def, e, bill, user) {
+   if (!finTasksOn_() || !e) return;
+   const key = "financial:" + e["Entry ID"];
+   try {
+      const want = bill && bill["Reminder"] === true && !bill["Deleted"] && !e["Deleted"] && e["Status"] !== "Skipped";
+      if (!want) {
+         if (e["Reminder Task"]) { tasksUpsertAuto_(key, null, user); finSys_(def, "entries", e, { "Reminder Task": "" }); }
+         return;
+      }
+      if (!finUnpaid_(e) && !e["Reminder Task"]) return;   // already paid before a task was made
+      const days = bill["Reminder Days"] === "" || bill["Reminder Days"] === undefined ? 3 : Math.max(0, Number(bill["Reminder Days"]) || 0);
+      const due = finIso_(e["Due Date"]);
+      const tid = tasksUpsertAuto_(key, {
+         "Title": "Pay " + bill["Name"] + " · " + finMoney_(e["Amount"]),
+         "Notes": "Due " + vehNiceDate_(due) + (bill["Autopay"] === true ? " (autopay)" : "") + ". From Financial: " + e["Entry ID"] + " · " + bill["Bill ID"] + " " + bill["Name"] + ".",
+         "Assigned To": bill["Reminder To"] || "USR-1", "Due Date": vehAddDays_(due, -days), "Category": "Financial",
+         "Source": "Financial " + bill["Bill ID"], "Done": !finUnpaid_(e)
+      }, user);
+      if (tid && tid !== e["Reminder Task"]) finSys_(def, "entries", e, { "Reminder Task": tid });
+   } catch (err) { console.warn("Reminder task not updated: " + err); }
+}
+// Reminders for some entries (by ID) or for every entry of one bill.
+function finRemind_(def, entryIds, user, billId) {
+   if (!finTasksOn_()) return;
+   const want = {}; (entryIds || []).forEach(id => want[id] = true);
+   modForget_(def, "entries");
+   const bills = {}; modRows_(def, "bills", true).forEach(b => bills[b["Bill ID"]] = b);
+   modRows_(def, "entries", true).filter(e => billId ? e["Bill ID"] === billId && (finUnpaid_(e) || e["Reminder Task"]) : want[e["Entry ID"]])
+      .forEach(e => { const b = bills[e["Bill ID"]]; if (b && (b["Reminder"] === true || e["Reminder Task"])) finReminder_(def, e, b, user); });
+   modForget_(def, "entries");
+}
+// Called by Tasks when a reminder task is ticked done: the bill entry is marked paid (today).
+function finTaskDone_(entryId, user) {
+   const def = financialDef_();
+   const e = modRows_(def, "entries").find(x => x["Entry ID"] === entryId);
+   if (!e || !finUnpaid_(e)) return;
+   modChange_(def, "entries", e, { "Status": "Paid", "Paid Date": coreDate_(vehToday_()) }, user, "Paid (task done)");
+}
+
+// ------------------------------------------------------------
+// Save rules
+// ------------------------------------------------------------
+function finBeforeSave_(tableKey, values, before, user, req) {
+   const def = financialDef_();
+   const merged = Object.assign({}, before || {}, values);
+   const norm = v => v instanceof Date ? finIso_(v) : String(v === undefined || v === null ? "" : v);
+   const changed = n => n in values && (before ? norm(values[n]) !== norm(before[n]) : values[n] !== "");
+   if (tableKey === "bills" || tableKey === "income") {
+      const f = merged["Frequency"];
+      if (f === "Every N months") {
+         const n = Number(merged["Every N Months"]);
+         if (!(n >= 1 && n === Math.round(n))) throw coreError_("INVALID", "Every N months: enter how many months (a whole number).");
+      } else if ("Every N Months" in values) values["Every N Months"] = "";
+      if (f === "Twice a month") {
+         const d2 = Number(merged["Second Day"]), d1 = +finIso_(merged["Start Date"]).slice(8, 10);
+         if (!(d2 >= 1 && d2 <= 31 && d2 === Math.round(d2))) throw coreError_("INVALID", "Twice a month: enter the second due day (1–31).");
+         if (d2 === d1) throw coreError_("INVALID", "The second due day is the same as the first one's day.");
+      } else if ("Second Day" in values) values["Second Day"] = "";
+      if (merged["End Date"] && merged["Start Date"] && finIso_(merged["End Date"]) < finIso_(merged["Start Date"])) throw coreError_("INVALID", "The last due date is before the first one.");
+      if (tableKey === "bills" && "Reminder Days" in values && values["Reminder Days"] !== "") {
+         const d = Number(values["Reminder Days"]);
+         if (!(d >= 0 && d <= 60 && d === Math.round(d))) throw coreError_("INVALID", "Days before due must be a whole number from 0 to 60.");
+      }
+      // A new default amount: ask whether upcoming unpaid entries change too.
+      if (before && "Amount" in values && finRound_(values["Amount"]) !== finRound_(before["Amount"])) {
+         const K = FIN_KINDS[tableKey];
+         const open = modRows_(def, K.entries).filter(e => e[K.id] === before[K.id] && finUnpaid_(e) && finRound_(e["Amount"]) !== finRound_(values["Amount"]));
+         if (open.length && req && req.updateFuture === undefined) {
+            throw coreError_("CONFIRM", "Update " + open.length + " upcoming unpaid " + (open.length === 1 ? "entry" : "entries") + " too?", {
+               confirm: { kind: "finAmount", count: open.length, from: finRound_(before["Amount"]), to: finRound_(values["Amount"]), name: before["Name"] }
+            });
+         }
+         if (req) req._finAmount = req.updateFuture ? open : [];
+      }
+      if (req && before) req._finSchedule = FIN_SCHEDULE_FIELDS.some(changed);
+   }
+   if (tableKey === "entries" || tableKey === "deposits") {
+      const K = finKindOfEntries_(tableKey);
+      if ("Status" in values) {
+         if (values["Status"] === K.paid && !merged["Paid Date"]) values["Paid Date"] = coreDate_(vehToday_());
+         if (values["Status"] !== K.paid) values["Paid Date"] = "";
+      }
+      if (!before && !("Scheduled For" in values)) values["Scheduled For"] = values["Due Date"];
+   }
+   if (tableKey === "accounts") {
+      ["Card Last 4", "Account Last 4"].forEach(n => {
+         if (n in values && values[n] !== "" && !/^\d{4}$/.test(String(values[n]))) throw coreError_("INVALID", "Only the last 4 digits can be saved (no full card or account numbers).");
+      });
+   }
+   if (tableKey === "loans" && "Vehicle ID" in values && values["Vehicle ID"] !== "" && !/^VEH-\d+$/.test(String(values["Vehicle ID"]))) {
+      throw coreError_("INVALID", "Pick the vehicle from the list.");
+   }
+   if (tableKey === "optlines" && "Quantity" in values && values["Quantity"] === "") values["Quantity"] = 1;
+   return values;
+}
+
+function finAfterSave_(tableKey, id, values, before, user, req) {
+   const def = financialDef_();
+   if (tableKey === "bills" || tableKey === "income") {
+      const K = FIN_KINDS[tableKey];
+      (req && req._finAmount || []).forEach(e => modChange_(def, K.entries, e, { "Amount": finRound_(values["Amount"]) }, user, "New default amount"));
+      if (req && req._finSchedule) finClearUpcoming_(def, tableKey, id, user, false);
+      modForget_(def, K.entries); modForget_(def, K.items);
+      const touched = finSyncKind_(def, tableKey, user, id);
+      if (tableKey === "bills") finRemind_(def, touched, user, id);
+      return;
+   }
+   if (tableKey === "entries") {
+      modForget_(def, "entries");
+      const e = modRows_(def, "entries").find(x => x["Entry ID"] === id);
+      if (e) finReminder_(def, e, vehFind_(def, "bills", e["Bill ID"]), user);
+   }
+}
+
+function finAfterDelete_(tableKey, row, user) {
+   const def = financialDef_();
+   if (tableKey === "bills" || tableKey === "income") finClearUpcoming_(def, tableKey, row[FIN_KINDS[tableKey].id], user, true);
+   if (tableKey === "entries" && row["Reminder Task"] && finTasksOn_()) {
+      try { tasksUpsertAuto_("financial:" + row["Entry ID"], null, user); } catch (e) { console.warn(e); }
+   }
+   if (tableKey === "options") {
+      modRows_(def, "optlines").filter(l => l["Option ID"] === row["Option ID"]).sort((a, b) => b._row - a._row)
+         .forEach(l => modRemoveRow_(def, "optlines", l));
+   }
+}
+
+// ------------------------------------------------------------
+// Loans, plans
+// ------------------------------------------------------------
+function finLoanStatus_(loan, bills, entries, pays, today) {
+   const lid = loan["Loan ID"], from = finIso_(loan["Balance Date"]) || "0000-00-00";
+   const linked = bills.filter(b => b["Loan ID"] === lid && !b["Deleted"]);
+   const ids = {}; bills.filter(b => b["Loan ID"] === lid).forEach(b => ids[b["Bill ID"]] = true);
+   const paid = entries.filter(e => ids[e["Bill ID"]] && e["Status"] === "Paid" && (finIso_(e["Paid Date"]) || finIso_(e["Due Date"])) >= from);
+   const extra = pays.filter(p => p["Loan ID"] === lid && finIso_(p["Date"]) >= from);
+   const start = finRound_(loan["Starting Balance"]);
+   const done = finRound_(paid.reduce((s, e) => s + (Number(e["Amount"]) || 0), 0) + extra.reduce((s, p) => s + (Number(p["Amount"]) || 0), 0));
+   const remaining = finRound_(start - done);
+   const monthly = finRound_(linked.filter(b => !b["End Date"] || finIso_(b["End Date"]) >= today).reduce((s, b) => s + (Number(b["Amount"]) || 0) * finPerMonth_(b), 0));
+   const o = { id: lid, start: start, paid: done, remaining: Math.max(0, remaining), progress: start > 0 ? Math.min(1, Math.max(0, done / start)) : 0,
+               monthly: monthly, months: null, payoff: "", basis: "", bills: linked.map(b => b["Bill ID"]) };
+   if (remaining <= 0 || loan["Paid Off Date"]) { o.basis = "done"; o.remaining = Math.max(0, remaining); o.progress = 1; return o; }
+   if (monthly <= 0) { o.basis = "none"; return o; }
+   const rate = Number(loan["Interest Rate"]) || 0;
+   if (rate > 0) {
+      let bal = remaining, n = 0;
+      const r = rate / 1200;
+      if (monthly <= bal * r) { o.basis = "never"; return o; }
+      while (bal > 0.005 && n < 1200) { bal = bal * (1 + r) - monthly; n++; }
+      o.months = n; o.basis = "rate";
+   } else { o.months = Math.ceil(remaining / monthly - 1e-9); o.basis = "simple"; }
+   o.payoff = vehAddMonths_(today, o.months).slice(0, 7);
+   return o;
+}
+function finLoanAll_(def, today) {
+   const bills = modRows_(def, "bills", true), entries = modRows_(def, "entries"), pays = modRows_(def, "loanpays");
+   const out = {};
+   modRows_(def, "loans").forEach(l => out[l["Loan ID"]] = finLoanStatus_(l, bills, entries, pays, today));
+   return out;
+}
+// Keeps the sheet's Remaining column up to date (for anyone reading the sheet itself).
+function finUpdateLoans_(def) {
+   const st = finLoanAll_(def, vehToday_());
+   let n = 0;
+   modRows_(def, "loans").forEach(l => {
+      const s = st[l["Loan ID"]];
+      if (s && (l["Remaining"] === "" || finRound_(l["Remaining"]) !== s.remaining)) { coreWriteChanges_(modSheet_(def, def.tables.loans), l._row, l, { "Remaining": s.remaining }); n++; }
+   });
+   if (n) modForget_(def, "loans");
+}
+
+function finPlanStatus_(def, today) {
+   const bills = modRows_(def, "bills", true), entries = modRows_(def, "entries");
+   const options = modRows_(def, "options");
+   const out = {};
+   modRows_(def, "plans").forEach(p => {
+      const pid = p["Plan ID"];
+      const ids = {}; bills.filter(b => b["Plan ID"] === pid).forEach(b => ids[b["Bill ID"]] = true);
+      const contrib = finRound_(entries.filter(e => ids[e["Bill ID"]] && e["Status"] === "Paid").reduce((s, e) => s + (Number(e["Amount"]) || 0), 0));
+      const saved = finRound_((Number(p["Starting Saved"]) || 0) + contrib);
+      const chosen = options.find(o => o["Plan ID"] === pid && o["Chosen"] === true);
+      const target = p["Target Amount"] !== "" && p["Target Amount"] !== undefined ? finRound_(p["Target Amount"]) : chosen ? finRound_(chosen["Total"]) : null;
+      const td = finIso_(p["Target Date"]);
+      const monthsLeft = td ? Math.max(1, Math.ceil(vehDaysBetween_(today, td) / 30.4375)) : null;
+      out[pid] = { saved: saved, contributions: contrib, target: target, chosen: chosen ? chosen["Option ID"] : "", monthsLeft: monthsLeft, pastDate: !!(td && td < today),
+         needed: target !== null && monthsLeft ? finRound_(Math.max(0, target - saved) / monthsLeft) : null,
+         progress: target ? Math.min(1, saved / target) : 0, bills: Object.keys(ids) };
+   });
+   return out;
+}
+
+// ------------------------------------------------------------
+// Report: the month grid for a calendar year
+// ------------------------------------------------------------
+function finReport_(def, year) {
+   year = Math.round(Number(year)) || +vehToday_().slice(0, 4);
+   const months = []; for (let i = 1; i <= 12; i++) months.push(year + "-" + String(i).padStart(2, "0"));
+   const sum = a => finRound_(a.reduce((s, x) => s + x, 0));
+   const zeros = () => [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+   const rowsFor = kind => {
+      const K = FIN_KINDS[kind];
+      const allEntries = modRows_(def, K.entries, true);
+      const last = {};
+      allEntries.forEach(e => { const d = finIso_(e["Scheduled For"]) || finIso_(e["Due Date"]); if (!last[e[K.id]] || d > last[e[K.id]]) last[e[K.id]] = d; });
+      const items = modRows_(def, K.items, true);
+      return items.map(it => {
+         const cells = zeros(), proj = zeros().map(() => false);
+         allEntries.filter(e => e[K.id] === it[K.id] && !e["Deleted"] && e["Status"] !== "Skipped" && String(e["Due Date"]).slice(0, 4) === String(year))
+            .forEach(e => { cells[+String(e["Due Date"]).slice(5, 7) - 1] += Number(e["Amount"]) || 0; });
+         if (!it["Deleted"]) {
+            const track = finTrackFrom_(it);
+            let from = year + "-01-01";
+            if (track > from) from = track;
+            if (last[it[K.id]] && vehAddDays_(last[it[K.id]], 1) > from) from = vehAddDays_(last[it[K.id]], 1);
+            finOccurrences_(it, from, year + "-12-31").forEach(d => { const m = +d.slice(5, 7) - 1; cells[m] += Number(it["Amount"]) || 0; proj[m] = true; });
+         }
+         return { id: it[K.id], name: it["Name"], group: kind === "income" ? "Income" : (it["Group"] || "Expenses"), cells: cells.map(finRound_), proj: proj, total: sum(cells) };
+      }).filter(r => r.cells.some(c => c !== 0));
+   };
+   const sections = [];
+   const inc = rowsFor("income").sort((a, b) => a.name.localeCompare(b.name));
+   sections.push({ name: "Income", kind: "income", rows: inc, total: months.map((m, i) => sum(inc.map(r => r.cells[i]))) });
+   const bills = rowsFor("bills");
+   const order = modListValues_(def, "Group").map(v => v.value);
+   bills.forEach(r => { if (order.indexOf(r.group) === -1) order.push(r.group); });
+   order.forEach(g => {
+      const rows = bills.filter(r => r.group === g).sort((a, b) => a.name.localeCompare(b.name));
+      if (rows.length) sections.push({ name: g, kind: "bills", rows: rows, total: months.map((m, i) => sum(rows.map(r => r.cells[i]))) });
+   });
+   const out = sections.filter(s => s.kind === "bills");
+   const remaining = months.map((m, i) => finRound_(sections[0].total[i] - out.reduce((s, x) => s + x.total[i], 0)));
+   // Spending logged in other modules (shown on its own, so nothing counts twice).
+   const other = [];
+   const add = (name, rows, dateField, amountField) => {
+      const cells = zeros();
+      rows.forEach(r => { const d = String(r[dateField] || ""); if (d.slice(0, 4) === String(year)) cells[+d.slice(5, 7) - 1] += Number(r[amountField]) || 0; });
+      if (cells.some(c => c)) other.push({ name: name, cells: cells.map(finRound_), total: sum(cells) });
+   };
+   const mods = coreModules_();
+   const on = k => { const m = mods.find(x => x.key === k); return !!(m && m.spreadsheetId); };
+   try { if (on("vehicles")) add("Vehicles – service", modRows_(vehiclesDef_(), "visits"), "Date", "Total"); } catch (e) { console.warn("Vehicles report: " + e); }
+   try { if (on("hockey")) add("Travel Hockey – expenses", modRows_(hockeyDef_(), "expenses"), "Date", "Amount"); } catch (e) { console.warn("Hockey report: " + e); }
+   return { year: year, months: months, sections: sections, remaining: remaining, remainingTotal: sum(remaining), other: other, today: vehToday_() };
+}
+function finReportAction_(req, user) {
+   coreRequire_(user, "financial", "reports", "view");
+   const def = financialDef_();
+   modPrefetch_(def);
+   return { report: finReport_(def, req.year) };
+}
+
+// ------------------------------------------------------------
+// Load
+// ------------------------------------------------------------
+function finDays_(user) {
+   const v = Number(PropertiesService.getScriptProperties().getProperty("fin_days_" + user.id));
+   return v >= 1 && v <= 365 ? v : 7;
+}
+function finSetDays_(req, user) {
+   const d = Math.round(Number(req.days));
+   if (!(d >= 1 && d <= 365)) throw coreError_("INVALID", "Pick 1 to 365 days.");
+   PropertiesService.getScriptProperties().setProperty("fin_days_" + user.id, String(d));
+   return { days: d };
+}
+
+function finLoad_(req, user) {
+   const def = financialDef_();
+   const see = a => coreCan_(user, "financial", a, "view");
+   if (!FIN_AREAS.some(see)) throw coreError_("FORBIDDEN", "You don't have access to Financial.");
+   modPrefetch_(def);
+   if (!req.reload && (see("bills") || see("income"))) finMaybeSync_(def, user);
+   const today = vehToday_();
+   const out = {
+      schema: modSchema_(def), caps: modCaps_(def, user), today: today, days: finDays_(user),
+      users: coreGetUsers_().map(u => ({ id: u.id, name: u.name })),
+      lists: modRows_(def, "lists"),
+      bills: [], entries: [], income: [], deposits: [], accounts: [], loans: [], loanpays: [], loanStatus: {},
+      plans: [], options: [], optlines: [], planStatus: {}, report: null, vehicles: [], hockey: null
+   };
+   if (see("bills")) { out.bills = modRows_(def, "bills"); out.entries = modRows_(def, "entries"); }
+   if (see("income")) { out.income = modRows_(def, "income"); out.deposits = modRows_(def, "deposits"); }
+   if (see("accounts")) out.accounts = modRows_(def, "accounts");
+   else if (see("bills") || see("income") || see("loans")) out.accounts = modRows_(def, "accounts").map(a => ({ "Account ID": a["Account ID"], "Nickname": a["Nickname"], "Kind": a["Kind"], "Active": a["Active"] }));
+   if (see("loans")) { out.loans = modRows_(def, "loans"); out.loanpays = modRows_(def, "loanpays"); out.loanStatus = finLoanAll_(def, today); }
+   if (see("plans")) { out.plans = modRows_(def, "plans"); out.options = modRows_(def, "options"); out.optlines = modRows_(def, "optlines"); out.planStatus = finPlanStatus_(def, today); }
+   if (see("reports")) { try { out.report = finReport_(def, req.year); } catch (e) { console.warn("Financial report: " + e); } }
+   // Vehicles to link a loan to (names only).
+   try {
+      const m = coreModules_().find(x => x.key === "vehicles");
+      if (see("loans") && m && m.spreadsheetId) out.vehicles = modRows_(vehiclesDef_(), "vehicles").map(v => ({ "Vehicle ID": v["Vehicle ID"], "Name": vehName_(v), "Status": v["Status"] }));
+   } catch (e) { console.warn("Vehicles for loans: " + e); }
+   if (out.schema.loans) {
+      const f = out.schema.loans.fields.find(x => x.name === "Vehicle ID");
+      if (f) { f.type = "ref"; f.ref = "vehicles"; }
+      out.schema.vehicles = { label: "Vehicles", id: "Vehicle ID", kind: "record", area: "loans", fields: [{ name: "Name", type: "text" }] };
+   }
+   // Travel Hockey: can this person send a paid bill to the hockey expenses?
+   try {
+      const m = coreModules_().find(x => x.key === "hockey");
+      if (see("bills") && m && m.status === "Active" && m.spreadsheetId && coreCan_(user, "hockey", "expenses", "add")) {
+         const hd = hockeyDef_();
+         out.hockey = {
+            categories: modListValues_(hd, "Expense Category").filter(v => v.active).map(v => v.value),
+            seasons: modRows_(hd, "seasons").filter(s => s["Active"] !== false).map(s => ({ id: s["Season ID"], name: s["Season"] + (s["Sport"] ? " " + s["Sport"] : ""), start: s["Start Date"], end: s["End Date"] }))
+         };
+      }
+   } catch (e) { console.warn("Hockey for Financial: " + e); }
+   return out;
+}
+
+// Loans shown on a vehicle (Vehicles screens): only for people who can see Financial ▸ Loans.
+function finVehicleLoans_(user) {
+   if (!finActive_() || !coreCan_(user, "financial", "loans", "view")) return {};
+   const def = financialDef_(), today = vehToday_();
+   const st = finLoanAll_(def, today), out = {};
+   modRows_(def, "loans").filter(l => l["Vehicle ID"]).forEach(l => {
+      const s = st[l["Loan ID"]];
+      (out[l["Vehicle ID"]] = out[l["Vehicle ID"]] || []).push({ id: l["Loan ID"], name: l["Name"], remaining: s.remaining, payoff: s.payoff, basis: s.basis, monthly: s.monthly });
+   });
+   return out;
+}
+
+// ------------------------------------------------------------
+// Actions
+// ------------------------------------------------------------
+
+// req: { table: "entries" | "deposits", id, to: "paid" | "unpaid" | "skip", amount?, date? }
+function finMark_(req, user) {
+   const def = financialDef_();
+   const table = req.table === "deposits" ? "deposits" : "entries", K = finKindOfEntries_(table), t = def.tables[table];
+   const row = modFind_(def, table, req.id);
+   modRequire_(user, def, t, "edit", row, {});
+   const today = vehToday_();
+   let values, label;
+   if (req.to === "skip") { values = { "Status": "Skipped", "Paid Date": "" }; label = "Skip"; }
+   else if (req.to === "unpaid") { values = { "Status": finIso_(row["Due Date"]) > today ? "Scheduled" : K.open, "Paid Date": "" }; label = "Not " + K.paid.toLowerCase(); }
+   else {
+      const d = req.date ? modParseDate_(req.date, { name: "Date" }) : coreDate_(today);
+      values = { "Status": K.paid, "Paid Date": d };
+      if (req.amount !== undefined && req.amount !== null && req.amount !== "") {
+         const n = Number(String(req.amount).replace(/[$,\s]/g, ""));
+         if (isNaN(n) || n < 0) throw coreError_("INVALID", "The amount must be a number.");
+         values["Amount"] = finRound_(n);
+      }
+      label = K.paid;
+   }
+   modChange_(def, table, row, values, user, label);
+   if (table === "entries") {
+      modForget_(def, "entries");
+      const e = modRows_(def, "entries").find(x => x["Entry ID"] === row["Entry ID"]);
+      finReminder_(def, e, vehFind_(def, "bills", row["Bill ID"]), user);
+   }
+   return { status: values["Status"] };
+}
+
+// req: { optionId?, values: { Plan ID, Option, Chosen, Notes }, lines: [{ id?, Item, Price, Quantity }] }
+function finSaveOption_(req, user) {
+   const def = financialDef_(), to = def.tables.options, tl = def.tables.optlines;
+   const before = req.optionId ? modFind_(def, "options", req.optionId) : null;
+   modRequire_(user, def, to, before ? "edit" : "add", before, req.values || {});
+   const values = modClean_(def, to, req.values || {}, user, before);
+   modCheckRequired_(to, Object.assign({}, before || {}, values));
+   const old = before ? modRows_(def, "optlines").filter(l => l["Option ID"] === before["Option ID"]) : [];
+   const keep = {}, lines = [];
+   (req.lines || []).forEach((raw, i) => {
+      const o = raw.id ? old.find(l => l["Line ID"] === raw.id) : null;
+      if (raw.id && !o) throw coreError_("STALE", "A line on this option changed. Refresh and try again.");
+      const v = modClean_(def, tl, Object.assign({}, raw, { "Option ID": undefined }), user, o);
+      delete v["Option ID"];
+      if (!String(v["Item"] || "").trim() && (v["Price"] === "" || v["Price"] === undefined)) return;
+      if (!String(v["Item"] || "").trim()) throw coreError_("INVALID", "Each line with a price needs an item.");
+      if (v["Quantity"] === "" || v["Quantity"] === undefined) v["Quantity"] = 1;
+      v["Sort"] = i + 1;
+      if (o) keep[o["Line ID"]] = true;
+      lines.push({ old: o, values: v });
+   });
+   values["Total"] = finRound_(lines.reduce((s, l) => s + (Number(l.values["Price"]) || 0) * (Number(l.values["Quantity"]) || 0), 0));
+   let id;
+   if (before) { id = before["Option ID"]; modChange_(def, "options", before, values, user); }
+   else id = modInsert_(def, "options", values, user);
+   lines.filter(l => l.old).forEach(l => modChange_(def, "optlines", l.old, l.values, user));
+   const fresh = lines.filter(l => !l.old).map(l => Object.assign({ "Option ID": id }, l.values));
+   if (fresh.length) modBulkInsert_(def, "optlines", fresh, user);
+   old.filter(l => !keep[l["Line ID"]]).sort((a, b) => b._row - a._row).forEach(l => {
+      modForget_(def, "optlines");
+      const r = modRows_(def, "optlines").find(x => x["Line ID"] === l["Line ID"]);
+      if (r) modRemoveRow_(def, "optlines", r);
+   });
+   // One chosen option per plan.
+   modForget_(def, "options");
+   const planId = values["Plan ID"] || (before && before["Plan ID"]);
+   if ((values["Chosen"] === true)) modRows_(def, "options").filter(o => o["Plan ID"] === planId && o["Option ID"] !== id && o["Chosen"] === true)
+      .forEach(o => modChange_(def, "options", o, { "Chosen": false }, user, "Not chosen"));
+   return { id: id, total: values["Total"] };
+}
+
+// req: { id (bill entry), seasonId?, category, item?, nonBillable?, notes? } -> a Travel Hockey expense.
+function finToHockey_(req, user) {
+   const def = financialDef_();
+   const e = modFind_(def, "entries", req.id);
+   modRequire_(user, def, def.tables.entries, "edit", e, {});
+   if (e["Status"] !== "Paid") throw coreError_("INVALID", "Mark it paid first.");
+   if (e["Hockey Expense ID"]) throw coreError_("INVALID", "It's already on the Travel Hockey expenses (" + e["Hockey Expense ID"] + ").");
+   if (!coreCan_(user, "hockey", "expenses", "add")) throw coreError_("FORBIDDEN", "You can't add Travel Hockey expenses.");
+   const hd = hockeyDef_();
+   const date = finIso_(e["Paid Date"]) || finIso_(e["Due Date"]);
+   const seasons = modRows_(hd, "seasons");
+   const season = req.seasonId ? seasons.find(s => s["Season ID"] === req.seasonId) : seasons.find(s => s["Start Date"] <= date && date <= s["End Date"]);
+   if (!season) throw coreError_("INVALID", "No Travel Hockey season covers " + vehNiceDate_(date) + ".");
+   const cat = modListValues_(hd, "Expense Category").find(v => v.active && v.value.toLowerCase() === String(req.category || "").toLowerCase());
+   if (!cat) throw coreError_("INVALID", "Pick a hockey expense category.");
+   const bill = vehFind_(def, "bills", e["Bill ID"]) || {};
+   const hid = modInsert_(hd, "expenses", {
+      "Date": coreDate_(date), "Category": cat.value, "Item": String(req.item || bill["Name"] || "").trim(), "Amount": finRound_(e["Amount"]),
+      "Non-Billable": req.nonBillable === true, "Sport": season["Sport"] || "", "Season ID": season["Season ID"],
+      "Notes": ("From Financial " + e["Entry ID"] + (req.notes ? " · " + String(req.notes).trim() : "")).slice(0, 500)
+   }, user);
+   modChange_(def, "entries", e, { "Hockey Expense ID": hid }, user, "Sent to Travel Hockey");
+   return { hockeyId: hid };
+}
+
+// Statement / confirmation file on a bill entry (Financial ▸ Statements in Drive).
+function finUpload_(req, user) {
+   const def = financialDef_(), t = modTableDef_(def, req.table);
+   const f = t.fields.find(x => x.name === req.field && x.type === "file");
+   if (!f || !FIN_FOLDERS[req.table]) throw coreError_("BAD_REQUEST", "That can't have a file.");
+   const row = modFind_(def, req.table, req.id);
+   modRequire_(user, def, t, "edit", row, {});
+   const file = req.file || {};
+   if (!/^(image\/(jpeg|png|webp|heic|heif)|application\/pdf)$/.test(String(file.mimeType))) throw coreError_("INVALID", "Use a photo (JPG, PNG) or a PDF.");
+   const bytes = Utilities.base64Decode(String(file.data || "").replace(/^data:[^,]*,/, ""));
+   if (!bytes.length) throw coreError_("INVALID", "The file is empty.");
+   if (bytes.length > 15 * 1024 * 1024) throw coreError_("INVALID", "That file is too large (15 MB at most).");
+   const ext = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/heic": ".heic", "image/heif": ".heif", "application/pdf": ".pdf" }[file.mimeType];
+   const name = (row["Entry ID"] + " " + finItemName_(def, "bills", row["Bill ID"]) + " – " + FIN_FOLDERS[req.table].label + " – " + finIso_(row["Due Date"]))
+      .replace(/[\\\/:*?"<>|\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 140) + ext;
+   const saved = DriveApp.getFolderById(FIN_FOLDERS[req.table].id).createFile(Utilities.newBlob(bytes, file.mimeType, name));
+   saved.setDescription(row["Entry ID"] + " · uploaded by " + user.name + " (" + user.id + ") via Ayers Household");
+   const url = "https://drive.google.com/file/d/" + saved.getId() + "/view";
+   modChange_(def, req.table, row, { [f.name]: url }, user, "Add file");
+   return { url: url, name: name };
+}
+function finClearFile_(req, user) {
+   const def = financialDef_(), t = modTableDef_(def, req.table);
+   const f = t.fields.find(x => x.name === req.field && x.type === "file");
+   if (!f) throw coreError_("BAD_REQUEST", "That has no file.");
+   const row = modFind_(def, req.table, req.id);
+   modRequire_(user, def, t, "edit", row, {});
+   modChange_(def, req.table, row, { [f.name]: "" }, user, "Remove file");
+   return { cleared: true };
+}
+function finFile_(req, user) {
+   const def = financialDef_();
+   const fileId = String(req.fileId || "");
+   if (!/^[A-Za-z0-9_-]{10,}$/.test(fileId)) throw coreError_("BAD_REQUEST", "Unknown file.");
+   if (!coreCan_(user, "financial", "bills", "view")) throw coreError_("NOT_FOUND", "That file isn't linked to anything you can see.");
+   const linked = modRows_(def, "entries").some(r => String(r["Statement"] || "").indexOf("/d/" + fileId + "/") !== -1);
+   if (!linked) throw coreError_("NOT_FOUND", "That file isn't linked to anything you can see.");
+   let blob;
+   try { blob = DriveApp.getFileById(fileId).getBlob(); } catch (e) { throw coreError_("NOT_FOUND", "The file couldn't be found in Drive (it may have been moved or deleted)."); }
+   return { file: { mimeType: blob.getContentType(), data: Utilities.base64Encode(blob.getBytes()), name: blob.getName() } };
+}
+
+// ------------------------------------------------------------
+// Setup (run once from the script editor; safe to run again: only adds what's missing).
+// Links the spreadsheet, turns the module on, builds the tabs, fills the dropdowns, adds the
+// Reports area (and names the Bills area "Upcoming & Bills"), and adds "Financial" to the
+// Tasks categories. No bills, income or history are copied in (that's a separate import, later).
+// ------------------------------------------------------------
+const FIN_SEED = {
+   "Group": [["Expenses", 1], ["Non-Essential", 2], ["Savings", 3]],
+   "Category": ["Utilities", "Phone", "TV & Internet", "Insurance", "Loan", "Credit Card", "School", "Subscriptions", "Food", "Household", "Gasoline", "Car Wash", "Savings", "Other"],
+   "Person": ["Chris", "Brittany", "Joint"]
+};
+function financialSetup() {
+   const core = coreSheet_(CORE_CONFIG.tabs.modules);
+   const row = coreTable_(CORE_CONFIG.tabs.modules).rows.find(r => r["Module Key"] === "financial");
+   if (!row) throw new Error("There's no financial row on the Modules tab.");
+   const hm = coreHeaderMap_(core).map;
+   if (!String(row["Spreadsheet ID"] || "").trim()) core.getRange(row._row, hm["spreadsheet id"]).setValue(FIN_SPREADSHEET_ID);
+   if (String(row["Status"] || "").trim() !== "Active") core.getRange(row._row, hm["status"]).setValue("Active");
+   CORE_GRID = {}; MOD_SS = {}; MOD_ROWS = {};
+   const def = financialDef_();
+   modBuildTabs_(def);
+   const owner = coreGetUsers_(true).find(u => u.id === "USR-1") || coreGetUsers_(true).find(u => u.admin);
+   const out = [];
+   const have = modRows_(def, "lists", true).map(r => r["List"] + "|" + String(r["Value"]).toLowerCase());
+   const lists = [];
+   Object.keys(FIN_SEED).forEach(l => FIN_SEED[l].forEach(v => {
+      const val = Array.isArray(v) ? v[0] : v, sort = Array.isArray(v) ? v[1] : "";
+      if (have.indexOf(l + "|" + val.toLowerCase()) === -1) lists.push({ "List": l, "Value": val, "Sort": sort });
+   }));
+   if (lists.length) modBulkInsert_(def, "lists", lists, owner);
+   out.push("List values added: " + lists.length);
+   // Areas: Reports, and the Bills area's name.
+   const areas = coreSheet_(CORE_CONFIG.tabs.areas), am = coreHeaderMap_(areas).map;
+   const arows = coreTable_(CORE_CONFIG.tabs.areas).rows;
+   const bills = arows.find(r => r["Module Key"] === "financial" && r["Area Key"] === "bills");
+   if (bills && String(bills["Area Name"]).trim() === "Bills") { areas.getRange(bills._row, am["area name"]).setValue("Upcoming & Bills"); out.push("Area renamed: Upcoming & Bills"); }
+   if (!arows.some(r => r["Module Key"] === "financial" && r["Area Key"] === "reports")) {
+      coreAppendRow_(areas, { "Module Key": "financial", "Area Key": "reports", "Area Name": "Reports", "Sort": 60, "Description": "Month grid and spending from other modules" });
+      out.push("Area added: Reports");
+   }
+   CORE_GRID = {};
+   // Tasks: a Financial category for bill reminders.
+   if (finTasksOn_()) {
+      const td = tasksDef_();
+      if (!modListValues_(td, "Category").some(v => v.value === "Financial")) { modBulkInsert_(td, "lists", [{ "List": "Category", "Value": "Financial", "Sort": "" }], owner); out.push("Tasks category added: Financial"); }
+   }
+   const perms = coreGetPerms_().filter(p => p.module === "financial").map(p => p.userId + (p.area ? "/" + p.area : "") + "=" + p.role);
+   out.push("Access: " + (perms.join(", ") || "admins only"));
+   coreFlushLog_();
+   const ss = modSs_("financial");
+   const blank = ss.getSheetByName("Sheet1");
+   if (blank && blank.getLastRow() === 0 && ss.getSheets().length > 1) ss.deleteSheet(blank);
+   Object.keys(FIN_FOLDERS).forEach(k => DriveApp.getFolderById(FIN_FOLDERS[k].id).getName());
+   SpreadsheetApp.flush();
+   console.log("Financial setup done | " + out.join(" | "));
+   return out.join(" | ");
+}
