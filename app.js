@@ -9,7 +9,7 @@
   const CFG = window.HH_CONFIG || {};
   const TOKEN_KEY = "hh_id_token";     // Google sign-in pass (only until the server gives a session)
   const SESSION_KEY = "hh_session";    // the app's own session: { token, exp }
-  const APP_VERSION = "21";
+  const APP_VERSION = "22";
 
   const state = {
     token: null, session: null, sessionExp: 0,
@@ -434,13 +434,16 @@
     // Your own items (or ones that belong to no one) unless "Show everyone's" is ticked.
     const mine = d => !d.owner || d.owner === state.me.id;
     const others = all.some(d => !mine(d));
-    const showAll = others && dueShowAll();
+    // The tick box stays for admins and editors even when nobody else has anything due right now.
+    const canAll = others || isAdmin() || state.modules.some(m => m.role === "Editor");
+    const showAll = canAll && dueShowAll();
     const due = showAll ? all : all.filter(mine);
     const dueRow = d => '<a class="list-item" href="' + esc(d.href || "#/") + '"><div class="body"><div class="title">' + esc(d.title) + '</div>' +
       '<div class="sub">' + esc([d.when, d.module].filter(Boolean).join(" · ")) + '</div></div></a>';
     let dueHtml;
     if (!due.length) {
-      dueHtml = '<div class="card"><div class="empty">' + (others ? "Nothing of yours due in the next " + plural(days, "day") + ". Tick Show everyone’s to see the rest of the household."
+      dueHtml = '<div class="card"><div class="empty">' + (showAll ? "Nothing due for anyone in the next " + plural(days, "day") + "."
+        : others ? "Nothing of yours due in the next " + plural(days, "day") + ". Tick Show everyone’s to see the rest of the household."
         : "Nothing due in the next " + plural(days, "day") + ". Bills, service, insurance and other reminders show here as each module is added.") + '</div></div>';
     } else if (showAll) {
       // One group per person: you first, then by name, then items that belong to no one.
@@ -451,7 +454,7 @@
     } else {
       dueHtml = '<div class="card list">' + due.map(dueRow).join("") + '</div>';
     }
-    const dueHead = (others ? '<label class="due-toggle"><input type="checkbox" data-act="due-all"' + (showAll ? " checked" : "") + '> Show everyone’s</label>' : "") +
+    const dueHead = (canAll ? '<label class="due-toggle"><input type="checkbox" data-act="due-all"' + (showAll ? " checked" : "") + '> Show everyone’s</label>' : "") +
       '<button class="link-btn" data-act="due-days">Next ' + plural(days, "day") + '</button>';
     const tasks = state.tasks || [];
     const tasksHtml = tasks.length
