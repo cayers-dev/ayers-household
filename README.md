@@ -27,9 +27,10 @@ Mobile web app for the Ayers household: vehicles, travel hockey, inventory, fina
 | `Modules.gs` | Shared engine for every module: tables, add / edit / soft delete / restore / permanent delete, dropdown lists (in use = turned off instead of deleted), permission checks, Due Soon. |
 | `Hockey.gs` | Travel Hockey: seasons, earnings, chore plan, weekly totals and consequences, expenses, schedule, venues. `hockeySetup()` builds its spreadsheet's tabs and fills the lists. |
 | `Shopping.gs` | Shopping List: items, check off, remove checked, add several at once. `shoppingSetup()`. |
+| `Tasks.gs` | Tasks: per-person and household tasks, status list, checklists, repeats, Home ▸ My tasks, tasks from other modules (Vehicles follow-ups). `tasksSetup()`. |
 | `Vehicles.gs` | Vehicles: vehicles, features, plates, places, service visits and lines, odometer, intervals (due dates, mileage estimates), insurance policies and cards, registrations, files in Drive, Due Soon. `vehiclesSetup()`. |
 
-Front-end files: `app.js` (core), `modules.js` (shared module screens: forms, list managers, deleted items), `hockey.js` (Travel Hockey screens), `shopping.js` (Shopping List), `vehicles.js` (Vehicles).
+Front-end files: `app.js` (core), `modules.js` (shared module screens: forms, list managers, deleted items), `hockey.js` (Travel Hockey screens), `shopping.js` (Shopping List), `vehicles.js` (Vehicles), `tasks.js` (Tasks).
 
 ## Modules
 
@@ -39,7 +40,7 @@ Front-end files: `app.js` (core), `modules.js` (shared module screens: forms, li
 | hockey | Travel Hockey | Active (spreadsheet "Ayers Household - Travel Hockey") |
 | inventory | Inventory | Coming soon |
 | financial | Financial | Coming soon |
-| tasks | Tasks | Coming soon |
+| tasks | Tasks | Active (spreadsheet "Ayers Household - Tasks"); Google Tasks sync next |
 | work | Work | Coming soon |
 | home | Home Maintenance & Projects | Coming soon |
 | shopping | Shopping List | Active (spreadsheet "Ayers Household - Shopping List") |

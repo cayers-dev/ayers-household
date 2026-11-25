@@ -22,7 +22,7 @@
 // All module definitions, by key. (A function, not a top-level object, so
 // file load order in the Apps Script project never matters.)
 function modDefs_() {
-   return { hockey: hockeyDef_(), shopping: shoppingDef_(), vehicles: vehiclesDef_() };
+   return { hockey: hockeyDef_(), shopping: shoppingDef_(), vehicles: vehiclesDef_(), tasks: tasksDef_() };
 }
 
 const MOD_SYSTEM_COLS = ["Added By", "Added At", "Updated By", "Updated At", "Deleted", "Deleted By", "Deleted At"];
@@ -111,6 +111,7 @@ function modOut_(v, type, tz) {
    if (v === null || v === undefined) return "";
    if (type === "bool") return v === true || String(v).toUpperCase() === "TRUE";
    if (v instanceof Date) {
+      if (type === "time") return Utilities.formatDate(v, tz, "HH:mm");
       if (type === "datetime") return Utilities.formatDate(v, tz, "yyyy-MM-dd'T'HH:mm");
       return Utilities.formatDate(v, tz, "yyyy-MM-dd");
    }
@@ -204,6 +205,10 @@ function modClean_(def, t, raw, user, before) {
       } else if (v !== "" && f.type === "datetime") {
          if (!/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?$/.test(String(v))) throw coreError_("INVALID", (f.label || f.name) + " must be a date and time.");
          v = coreDate_(v);
+      } else if (v !== "" && f.type === "time") {
+         const tm = /^(\d{1,2}):(\d{2})/.exec(String(v));
+         if (!tm || +tm[1] > 23 || +tm[2] > 59) throw coreError_("INVALID", (f.label || f.name) + " must be a time like 14:30.");
+         v = String(+tm[1]).padStart(2, "0") + ":" + tm[2];
       } else if (v !== "" && f.type === "choice") {
          const match = (f.options || []).find(o => o.toLowerCase() === String(v).toLowerCase());
          if (!match) throw coreError_("INVALID", (f.label || f.name) + " must be one of: " + (f.options || []).join(", ") + ".");
@@ -303,7 +308,7 @@ function modAdd_(req, user) {
 function modUpdate_(req, user) {
    const def = modDef_(req.module), t = modTableDef_(def, req.table);
    const row = modFind_(def, req.table, req.id);
-   modRequire_(user, def, t, "edit", row);
+   modRequire_(user, def, t, "edit", row, req.values || {});
    let values = modClean_(def, t, req.values || {}, user, row);
    if (def.beforeSave) values = def.beforeSave(req.table, values, row, user, req) || values;
    modCheckRequired_(t, Object.assign({}, row, values));
@@ -459,7 +464,7 @@ function modPrefetch_(def) {
    const dateCols = {};
    Object.keys(def.tables).forEach(k => {
       const t = def.tables[k], cols = {};
-      t.fields.forEach(f => { if (f.type === "date" || f.type === "datetime") cols[f.name] = f.type; });
+      t.fields.forEach(f => { if (f.type === "date" || f.type === "datetime" || f.type === "time") cols[f.name] = f.type; });
       ["Added At", "Updated At", "Deleted At"].forEach(n => cols[n] = "datetime");
       dateCols[t.tab] = cols;
    });
@@ -469,7 +474,7 @@ function modPrefetch_(def) {
 // Due Soon items and Home tile summaries from every module that's set up.
 // A module that fails here never breaks Home.
 function modHomeData_(user, days, visibleModules) {
-   const out = { dueSoon: [], summaries: {} };
+   const out = { dueSoon: [], summaries: {}, tasks: [] };
    const defs = modDefs_();
    visibleModules.forEach(m => {
       const def = defs[m.key];
@@ -477,6 +482,7 @@ function modHomeData_(user, days, visibleModules) {
       try {
          const r = def.home(user, days) || {};
          (r.dueSoon || []).forEach(d => out.dueSoon.push(Object.assign({ module: m.name }, d)));
+         (r.tasks || []).forEach(t => out.tasks.push(t));
          if (r.summary) out.summaries[m.key] = r.summary;
       } catch (e) { console.warn(m.key + " home data failed: " + e); }
    });
@@ -515,6 +521,7 @@ function modBuildTabs_(def) {
          if (f.type === "date") sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setNumberFormat("m/d/yyyy");
          if (f.type === "datetime") sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setNumberFormat("m/d/yyyy h:mm am/pm");
          if (f.type === "money") sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setNumberFormat("$#,##0.00");
+         if (f.type === "time") sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setNumberFormat("@");   // kept as text, e.g. 14:30
       });
       // Tick boxes as validation only: empty cells show an unticked box without making
       // the tab look 1,000 rows long (which slows every read).

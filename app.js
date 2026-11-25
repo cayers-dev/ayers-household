@@ -9,7 +9,7 @@
   const CFG = window.HH_CONFIG || {};
   const TOKEN_KEY = "hh_id_token";     // Google sign-in pass (only until the server gives a session)
   const SESSION_KEY = "hh_session";    // the app's own session: { token, exp }
-  const APP_VERSION = "22";
+  const APP_VERSION = "23";
 
   const state = {
     token: null, session: null, sessionExp: 0,
@@ -457,10 +457,21 @@
     const dueHead = (canAll ? '<label class="due-toggle"><input type="checkbox" data-act="due-all"' + (showAll ? " checked" : "") + '> Show everyone’s</label>' : "") +
       '<button class="link-btn" data-act="due-days">Next ' + plural(days, "day") + '</button>';
     const tasks = state.tasks || [];
+    const tasksOn = state.modules.some(m => m.key === "tasks" && m.status === "Active" && MODULE_VIEWS.tasks);
+    const taskWhen = t => {
+      const d = new Date(t.due + "T12:00:00"), today = new Date(); today.setHours(12, 0, 0, 0);
+      const diff = Math.round((d - today) / 86400000);
+      const day = diff === 0 ? "Today" : diff === 1 ? "Tomorrow" : diff < 0 ? "Overdue · " + d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+      const tm = t.time ? (" " + ((+t.time.slice(0, 2) % 12) || 12) + ":" + t.time.slice(3, 5) + (+t.time.slice(0, 2) < 12 ? " AM" : " PM")) : "";
+      return day + tm;
+    };
     const tasksHtml = tasks.length
-      ? '<div class="card list">' + tasks.map(t => '<div class="list-item"><div class="body"><div class="title">' + esc(t.title) + '</div>' +
-          (t.due ? '<div class="sub">Due ' + esc(t.due) + '</div>' : "") + '</div></div>').join("") + '</div>'
-      : '<div class="card"><div class="empty">Your task list shows here once the Tasks module is set up.</div></div>';
+      ? '<div class="card list">' + tasks.map(t => '<div class="list-item home-task' + (t.priority === "High" ? " high" : "") + '">' +
+          '<button class="sh-check" data-act="task-done" data-id="' + esc(t.id) + '" aria-label="Complete ' + esc(t.title) + '"></button>' +
+          '<a class="body" href="' + esc(t.href) + '"><div class="title">' + esc(t.title) + '</div>' +
+          '<div class="sub' + (t.overdue ? " overdue" : "") + '">' + esc([taskWhen(t), t.priority === "High" ? "High priority" : "", t.steps ? t.stepsDone + " of " + t.steps + " steps" : "", t.shared ? "Household" : ""].filter(Boolean).join(" · ")) + '</div></a></div>').join("") + '</div>' +
+          '<p class="hint"><a href="#/tasks">See all tasks</a></p>'
+      : '<div class="card"><div class="empty">' + (tasksOn ? 'Nothing due in the next 7 days. <a href="#/tasks">See all tasks</a>' : "Your task list shows here once the Tasks module is set up.") + '</div></div>';
     const tiles = state.modules.map(m => {
       const built = m.status === "Active" && MODULE_VIEWS[m.key];
       const info = m.status === "Off" ? "Off (admins only)" : !built ? "Coming soon" : (m.summary || (m.role === "Admin" ? "" : m.role));
@@ -821,6 +832,13 @@
       case "refresh": refresh(); break;
       case "sign-out": signOut(); break;
       case "due-days": dueDaysForm(); break;
+      case "task-done": {
+        el.disabled = true; el.classList.add("on");
+        api("tasks.complete", { module: "tasks", id: d.id, done: true })
+          .then(() => { toast("Done"); if (MODULE_RESETS.tasks) MODULE_RESETS.tasks(); refreshInBackground(); })
+          .catch(err => { el.disabled = false; el.classList.remove("on"); handleError(err); });
+        break;
+      }
       case "add-user": userForm(""); break;
       case "edit-user": userForm(d.id); break;
       case "edit-module": moduleForm(d.key); break;

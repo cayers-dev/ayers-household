@@ -278,6 +278,7 @@ function coreBootstrap_(user) {
    // Due Soon items and Home tile summaries from each built module.
    const extra = modHomeData_(user, out.user.dueSoonDays, modules);
    out.dueSoon = extra.dueSoon;
+   out.tasks = extra.tasks;
    out.modules.forEach(m => { if (extra.summaries[m.key]) m.summary = extra.summaries[m.key]; });
    if (user.admin) {
       out.admin = {
@@ -731,6 +732,7 @@ function coreBatchRead_(ss, names, dateCols) {
 function coreSerialToIso_(serial, type) {
    const d = new Date(Math.round((serial - 25569) * 86400000));
    const s = d.toISOString();
+   if (type === "time") return s.slice(11, 16);
    return type === "datetime" ? s.slice(0, 16) : s.slice(0, 10);
 }
 

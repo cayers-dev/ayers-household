@@ -475,6 +475,13 @@ function vehiclesSaveVisit_(req, user) {
       const row = modRows_(def, "lines").find(x => x["Line ID"] === l["Line ID"]);
       if (row) { modRemoveRow_(def, "lines", row); modLog_(def, user, "Delete", tl.label, modTitle_(def, tl, row), "Removed from " + visitId); }
    });
+   // Follow-ups with a date become tasks (Tasks module); removed ones come off the task list.
+   modForget_(def, "lines"); modForget_(def, "visits");
+   const visitNow = modRows_(def, "visits").find(v => v["Visit ID"] === visitId);
+   const had = {};
+   oldLines.forEach(l => { if (l["Follow Up Date"]) had[l["Line ID"]] = true; });
+   modRows_(def, "lines").filter(l => l["Visit ID"] === visitId).forEach(l => { if (l["Follow Up Date"] || had[l["Line ID"]]) vehFollowUpTask_(def, l, visitNow, user); delete had[l["Line ID"]]; });
+   Object.keys(had).forEach(id => { try { tasksUpsertAuto_("vehicles:" + id, null, user); } catch (e) { console.warn(e); } });
    return { id: visitId, total: total };
 }
 
@@ -559,7 +566,44 @@ function vehiclesFollowUp_(req, user) {
    const row = modFind_(def, "lines", req.id);
    modRequire_(user, def, t, "edit", row);
    modChange_(def, "lines", row, { "Follow Up Done": !!req.done }, user, req.done ? "Follow-up done" : "Follow-up reopened");
+   modForget_(def, "lines");
+   const line = modRows_(def, "lines").find(l => l["Line ID"] === row["Line ID"]);
+   if (line && line["Follow Up Date"]) vehFollowUpTask_(def, line, modRows_(def, "visits").find(v => v["Visit ID"] === line["Visit ID"]), user);
    return { done: !!req.done };
+}
+
+// A follow-up (with a date) as a task for the vehicle's primary driver (household task if none).
+function vehFollowUpTask_(def, line, visit, user) {
+   if (typeof tasksUpsertAuto_ !== "function") return;
+   const key = "vehicles:" + line["Line ID"];
+   try {
+      if (!line["Follow Up Date"] || !visit) { tasksUpsertAuto_(key, null, user); return; }
+      const v = vehFind_(def, "vehicles", visit["Vehicle ID"]) || {};
+      tasksUpsertAuto_(key, {
+         "Title": (line["Follow Up"] || "Follow up") + " · " + [v["Year"], v["Make"], v["Model"]].filter(Boolean).join(" "),
+         "Notes": "Follow-up from service visit " + visit["Visit ID"] + " on " + vehNiceDate_(visit["Date"]) + ".",
+         "Assigned To": v["Primary Driver"] || "", "Due Date": vehIso_(line["Follow Up Date"]), "Category": "Vehicles",
+         "Source": "Vehicles " + visit["Visit ID"], "Done": line["Follow Up Done"] === true
+      }, user);
+   } catch (e) { console.warn("Follow-up task not updated: " + e); }
+}
+// Called by Tasks when a follow-up task is ticked done (or reopened).
+function vehFollowUpDone_(lineId, done, user) {
+   const def = vehiclesDef_();
+   const row = modRows_(def, "lines").find(l => l["Line ID"] === lineId);
+   if (row && (row["Follow Up Done"] === true) !== !!done) modChange_(def, "lines", row, { "Follow Up Done": !!done }, user, done ? "Follow-up done" : "Follow-up reopened");
+}
+// Setup of Tasks: every open follow-up with a date becomes a task. Returns how many.
+function vehSyncAllFollowUps_(user) {
+   const m = coreModules_().find(x => x.key === "vehicles");
+   if (!m || !m.spreadsheetId) return 0;
+   const def = vehiclesDef_();
+   let n = 0;
+   modRows_(def, "lines").filter(l => l["Follow Up Date"] && l["Follow Up Done"] !== true).forEach(l => {
+      const visit = modRows_(def, "visits").find(v => v["Visit ID"] === l["Visit ID"]);
+      if (visit) { vehFollowUpTask_(def, l, visit, user); n++; }
+   });
+   return n;
 }
 
 // req: { vehicleId, features: [{ featureId, value }] } -> the vehicle's features become exactly these.
@@ -611,6 +655,7 @@ function vehiclesHome_(user, days) {
          sortKey: date, href: href, owner: owner, ownerName: ou ? ou.name : "" });
    };
    let dueCount = 0;
+   const tasksOn = typeof tasksActive_ === "function" && tasksActive_();   // follow-ups are on the task list then
    active.forEach(v => {
       const vid = v["Vehicle ID"], vh = "#/vehicles/v/" + encodeURIComponent(vid);
       if (see("service")) {
@@ -618,7 +663,7 @@ function vehiclesHome_(user, days) {
             .forEach(s => { push(v, s.action, s.dueDate, vh + "/service", s.estimated); dueCount++; });
          const visits = {};
          modRows_(def, "visits").filter(x => x["Vehicle ID"] === vid).forEach(x => visits[x["Visit ID"]] = x);
-         modRows_(def, "lines").filter(l => visits[l["Visit ID"]] && l["Follow Up Date"] && l["Follow Up Done"] !== true && l["Follow Up Date"] <= horizon)
+         if (!tasksOn) modRows_(def, "lines").filter(l => visits[l["Visit ID"]] && l["Follow Up Date"] && l["Follow Up Done"] !== true && l["Follow Up Date"] <= horizon)
             .forEach(l => { push(v, "Follow up: " + (l["Follow Up"] || "service"), l["Follow Up Date"], "#/vehicles/visit/" + encodeURIComponent(l["Visit ID"])); dueCount++; });
       }
       if (see("insurance")) {

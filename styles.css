@@ -940,3 +940,27 @@ img.thumb[data-file-id] { cursor: pointer; }
 .vh-fu input[type="text"] { flex-basis: 100%; }
 .vh-fu-date { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
 .vh-fu-date input { width: auto; }
+
+/* ---------- Tasks ---------- */
+.tk-add input[type="date"] { width: 140px; flex: none; }
+.tk-item.done .body { opacity: .55; }
+.tk-item.done .title { text-decoration: line-through; }
+.tk-item.high .sh-check, .home-task.high .sh-check { border-color: var(--danger); }
+.tk-hi { color: var(--danger); font-weight: 800; }
+.tk-rep svg { width: 14px; height: 14px; vertical-align: -2px; color: var(--muted); }
+.list-item .sub.overdue, .home-task .sub.overdue { color: var(--danger); }
+.sh-grouphead.tk-over { color: var(--danger); }
+.tk-item a.body, .home-task a.body { text-decoration: none; color: inherit; }
+.tk-donetoggle { margin: 14px 2px 8px; }
+.tk-hero.high h2::before { content: "! "; color: var(--danger); }
+.tk-status { width: auto; }
+.tk-step { cursor: pointer; }
+.tk-step input { width: 20px; height: 20px; flex: none; }
+.tk-step.done .body { text-decoration: line-through; opacity: .6; }
+.tk-steps-edit { display: flex; flex-direction: column; gap: 6px; }
+.tk-step-row { display: flex; align-items: center; gap: 8px; }
+.tk-step-row input[type="text"] { flex: 1; min-width: 0; }
+.tk-step-row input[type="checkbox"] { width: 20px; height: 20px; flex: none; }
+.tk-daybtns { display: flex; gap: 6px; flex-wrap: wrap; }
+.tk-day { width: 40px; height: 36px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); font-weight: 600; cursor: pointer; }
+.tk-day.on { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }

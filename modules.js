@@ -80,6 +80,7 @@
     if (f.type === "percent") return v + "%";
     if (f.type === "date") return fmtDay(v, { year: "numeric" });
     if (f.type === "datetime") return fmtDayTime(v);
+    if (f.type === "time") return fmtTime("T" + v);
     if (f.type === "user") return userName(ctx, v);
     if (f.type === "file") return v ? "File attached" : "";
     if (f.type === "ref") {
@@ -138,6 +139,9 @@
         break;
       case "date":
         input = '<input type="date" id="' + id + '" name="' + esc(f.name) + '" value="' + esc(String(v).slice(0, 10)) + '"' + req + '>';
+        break;
+      case "time":
+        input = '<input type="time" id="' + id + '" name="' + esc(f.name) + '" value="' + esc(String(v).slice(0, 5)) + '"' + req + '>';
         break;
       case "datetime":
         input = '<input type="datetime-local" id="' + id + '" name="' + esc(f.name) + '" value="' + esc(String(v).slice(0, 16)) + '"' + req + '>';
