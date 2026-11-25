@@ -7,7 +7,7 @@
 (function () {
   "use strict";
   const C = window.HH_CORE, M = window.HH_MOD;
-  const { esc, $, toast, ICONS, svg, section, plural } = C;
+  const { esc, $, $$, toast, ICONS, svg, section, plural } = C;
 
   const sh = { data: null, loading: false, error: "", asking: false, urgent: false };   // urgent: the quick-add Urgent box
   const STORE_KEY = "hh-shop-store", GROUP_KEY = "hh-shop-group";
@@ -215,21 +215,22 @@
     if (ok) clearChecked(ids);
   }
 
-  // Add several at once: a grid of item + quantity rows; same store, category and urgent for all.
+  // Add several at once: a grid of item + quantity + urgent rows; same store and category for all.
+  // The Urgent box in the header ticks (or unticks) every row.
   const gridRow = i => '<div class="sh-grid-row"><input type="text" name="n' + i + '" placeholder="Item" aria-label="Item ' + (i + 1) + '" autocomplete="off">' +
-    '<input type="number" name="q' + i + '" placeholder="Qty" aria-label="Quantity ' + (i + 1) + '" inputmode="decimal" min="0" step="any"></div>';
+    '<input type="number" name="q' + i + '" placeholder="Qty" aria-label="Quantity ' + (i + 1) + '" inputmode="decimal" min="0" step="any">' +
+    '<label class="sh-grid-u"><input type="checkbox" name="u' + i + '" aria-label="Urgent ' + (i + 1) + '"></label></div>';
   function addSeveral() {
     const opt = (list, cur) => '<option value=""></option>' + listValues(list).map(l => l["Value"]).sort((a, b) => a.localeCompare(b))
       .map(v => '<option' + (v === cur ? " selected" : "") + '>' + esc(v) + '</option>').join("");
     let rows = 5;
     C.openSheet({
       title: "Add several items",
-      body: '<div class="sh-grid"><div class="sh-grid-head"><span>Item</span><span>Qty</span></div><div class="sh-grid-rows">' +
+      body: '<div class="sh-grid"><div class="sh-grid-head"><span>Item</span><span>Qty</span><label class="sh-grid-u" title="Tick every row"><input type="checkbox" data-sh-allurgent aria-label="Mark every row urgent"> Urgent</label></div><div class="sh-grid-rows">' +
           [0, 1, 2, 3, 4].map(gridRow).join("") + '</div>' +
           '<button type="button" class="link-btn sh-grid-more">+ Another row</button></div>' +
         '<div class="field"><label for="f_store">Store</label><select id="f_store" name="store">' + opt("Store", storeFilter()) + '</select></div>' +
         '<div class="field"><label for="f_cat">Category</label><select id="f_cat" name="category">' + opt("Category", "") + '</select></div>' +
-        '<div class="field"><label class="check"><input type="checkbox" name="urgent"> Urgent</label></div>' +
         '<p class="hint">Blank rows are ignored. Items already on the list are skipped.</p>',
       submitLabel: "Add",
       onReady: form => {
@@ -237,17 +238,19 @@
         const more = () => { box.insertAdjacentHTML("beforeend", gridRow(rows++)); };
         $(".sh-grid-more", form).addEventListener("click", () => { more(); const last = box.lastElementChild.querySelector("input"); if (last) last.focus(); });
         // Typing in the last row adds a fresh one below it.
-        box.addEventListener("input", e => { if (e.target.closest(".sh-grid-row") === box.lastElementChild && e.target.value) more(); });
+        box.addEventListener("input", e => { if (e.target.type !== "checkbox" && e.target.closest(".sh-grid-row") === box.lastElementChild && e.target.value) more(); });
+        const all = $("[data-sh-allurgent]", form);
+        all.addEventListener("change", () => $$('.sh-grid-rows input[type="checkbox"]', form).forEach(c => { c.checked = all.checked; }));
         const first = $('input[name="n0"]', form); if (first) setTimeout(() => first.focus(), 50);
       },
       onSubmit: async v => {
         const items = [];
         for (let i = 0; i < rows; i++) {
           const n = String(v["n" + i] || "").trim();
-          if (n) items.push({ item: n, quantity: String(v["q" + i] || "").trim() });
+          if (n) items.push({ item: n, quantity: String(v["q" + i] || "").trim(), urgent: v["u" + i] === true });
         }
         if (!items.length) throw new Error("Type at least one item.");
-        const r = await ctx.save("shopping.addMany", { items: items, store: v.store, category: v.category, urgent: v.urgent === true },
+        const r = await ctx.save("shopping.addMany", { items: items, store: v.store, category: v.category },
           res => "Added " + plural(res.added, "item") + (res.skipped && res.skipped.length ? ". Already on the list: " + res.skipped.join(", ") : ""));
         return !!r;
       }

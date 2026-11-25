@@ -78,7 +78,8 @@ function tasksDef_() {
          gDisconnect: { fn: tasksGDisconnect_, write: true },
          gDefault:    { fn: tasksGDefault_, write: true },
          gSetSecret:  { fn: tasksGSetSecret_, write: true },
-         gSync:       { fn: tasksGSync_, write: true }
+         gSync:       { fn: tasksGSync_, write: true },
+         pull:        { fn: tasksPull_, write: true }
       }
    };
 }
@@ -204,8 +205,7 @@ function tasksTidyChecklist_(s) {
 function tasksLoad_(req, user) {
    const def = tasksDef_();
    if (!coreCan_(user, "tasks", "tasks", "view")) throw coreError_("FORBIDDEN", "You don't have access to Tasks.");
-   modPrefetch_(def);
-   if (!req.reload) gtSyncUser_(user.id, user, false, GT_PULL_EVERY.load);   // changes made in Google Tasks come in
+   modPrefetch_(def);   // (Google Tasks changes come in afterwards through tasks.pull, so the list opens at once)
    const users = coreGetUsers_().filter(u => u.active).map(u => ({ id: u.id, name: u.name }));
    return {
       tasks: modRows_(def, "tasks").filter(r => tasksVisible_(user, r)),
@@ -295,23 +295,32 @@ function tasksUpsertAuto_(key, values, user) {
    return nid;
 }
 
+// req: { every: "home" | "load" } -> brings in changes made in Google Tasks (and sends the app's), at most
+// once a minute (list) or every 10 minutes (Home). The app calls it after the screen is showing.
+function tasksPull_(req, user) {
+   if (!coreCan_(user, "tasks", "tasks", "view")) return { changed: false };
+   const r = gtSyncUser_(user.id, user, false, req.every === "home" ? GT_PULL_EVERY.home : GT_PULL_EVERY.load) || {};
+   return { changed: !!(r.pulled || r.pushed), pulled: r.pulled || 0, pushed: r.pushed || 0, skipped: r.skipped || "", error: r.error || "" };
+}
+
 // ------------------------------------------------------------
-// Home: My tasks (overdue, today and the next 7 days) and the tile summary
+// Home: My tasks (overdue, today and the next 7 days, plus every open household task) and the tile summary
 // ------------------------------------------------------------
 function tasksHome_(user) {
    const out = { dueSoon: [], tasks: [] };
    if (!coreCan_(user, "tasks", "tasks", "view")) return out;
    const def = tasksDef_();
    modPrefetch_(def);
-   gtSyncUser_(user.id, user, false, GT_PULL_EVERY.home);
    const today = vehToday_(), week = vehAddDays_(today, 7);
    const open = modRows_(def, "tasks").filter(r => r["Status"] !== TASKS_DONE && (r["Assigned To"] === user.id || !r["Assigned To"]));
    const rank = { "High": 0, "Normal": 1, "Low": 2 };
-   out.tasks = open.filter(r => r["Due Date"] && r["Due Date"] <= week)
-      .sort((a, b) => (rank[a["Priority"]] - rank[b["Priority"]]) || String(a["Due Date"] + (a["Due Time"] || "")).localeCompare(String(b["Due Date"] + (b["Due Time"] || ""))))
+   // Mine: due in the next 7 days (or overdue). Household: every open one, whatever its date.
+   out.tasks = open.filter(r => !r["Assigned To"] || (r["Due Date"] && r["Due Date"] <= week))
+      .sort((a, b) => (!a["Assigned To"] - !b["Assigned To"]) || (rank[a["Priority"]] - rank[b["Priority"]]) ||
+         String((a["Due Date"] || "9999") + (a["Due Time"] || "")).localeCompare(String((b["Due Date"] || "9999") + (b["Due Time"] || ""))))
       .map(r => {
          const steps = String(r["Checklist"] || "").split("\n").filter(Boolean);
-         return { id: r["Task ID"], title: r["Title"], due: r["Due Date"], time: r["Due Time"] || "", priority: r["Priority"], overdue: r["Due Date"] < today,
+         return { id: r["Task ID"], title: r["Title"], due: r["Due Date"], time: r["Due Time"] || "", priority: r["Priority"], overdue: !!r["Due Date"] && r["Due Date"] < today,
                   shared: !r["Assigned To"], steps: steps.length, stepsDone: steps.filter(s => /^\[x\]/i.test(s)).length,
                   href: "#/tasks/t/" + encodeURIComponent(r["Task ID"]) };
       });

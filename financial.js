@@ -10,7 +10,7 @@
   const C = window.HH_CORE, M = window.HH_MOD;
   const { esc, $, $$, toast, ICONS, svg, section, plural } = C;
 
-  const fin = { data: null, loading: false, error: "", days: null, allHistory: {}, report: null, reportYear: null, reportLoading: false };
+  const fin = { data: null, loading: false, error: "", days: null, allHistory: {}, report: null, reportYear: null, reportLoading: false, openRows: {} };
   const IC = {
     bill: svg('<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>'),
     income: svg('<path d="M12 4v12M7 11l5 5 5-5"/><path d="M5 20h14"/>'),
@@ -59,6 +59,7 @@
       case "Every 2 weeks": return "Every 2 weeks (" + wd + ")";
       case "Twice a month": return "Twice a month (" + ord(d) + " & " + ord(Number(it["Second Day"]) || 0) + ")";
       case "Monthly": return "Monthly on the " + ord(d);
+      case "Last weekday of the month": return "Last weekday of each month";
       case "Every 2 months": return "Every 2 months on the " + ord(d);
       case "Quarterly": return "Quarterly on the " + ord(d);
       case "Every 6 months": return "Every 6 months on the " + ord(d);
@@ -293,7 +294,7 @@
   }
   function perMonth(it) {
     switch (it["Frequency"]) {
-      case "Weekly": return 52 / 12; case "Every 2 weeks": return 26 / 12; case "Twice a month": return 2; case "Monthly": return 1;
+      case "Weekly": return 52 / 12; case "Every 2 weeks": return 26 / 12; case "Twice a month": return 2; case "Monthly": return 1; case "Last weekday of the month": return 1;
       case "Every 2 months": return 1 / 2; case "Quarterly": return 1 / 3; case "Every 6 months": return 1 / 6; case "Annually": return 1 / 12;
       case "Every N months": return 1 / (Number(it["Every N Months"]) || 1);
     }
@@ -323,7 +324,7 @@
       [K === KINDS.bills ? "Paid from" : "Deposited to", acct ? acct["Nickname"] : ""],
       ["Loan", loan ? link("#/financial/loan/" + encodeURIComponent(loan["Loan ID"]), loan["Name"]) : "", true],
       ["Saving toward", plan ? link("#/financial/plan/" + encodeURIComponent(plan["Plan ID"]), plan["Goal"]) : "", true],
-      ["Reminder", it["Reminder"] === true ? "Task to " + M.userName(ctx, it["Reminder To"] || "USR-1") + ", " + plural(Number(it["Reminder Days"] === "" ? 3 : it["Reminder Days"]), "day") + " before" : ""],
+      ["Reminder", it["Reminder"] === true ? "Task to " + String(it["Reminder To"] || "USR-1").split(",").filter(Boolean).map(id => M.userName(ctx, id)).join(", ") + ", " + plural(Number(it["Reminder Days"] === "" ? 3 : it["Reminder Days"]), "day") + " before" : ""],
       ["First due", day(it["Start Date"])], ["Last due", day(it["End Date"])], ["Notes", it["Notes"]]
     ]);
     const table = K.entries;
@@ -521,15 +522,35 @@
       s.rows.forEach(r => { body += '<tr><th class="fin-rh fin-item"><a href="' + linkTo(s, r) + '">' + esc(r.name) + '</a></th>' + r.cells.map((v, i) => cell(v, r.proj[i])).join("") + cell(r.total) + '</tr>'; });
     });
     body += '<tr class="fin-grp fin-rem"><th class="fin-rh">Remaining</th>' + R.remaining.map(v => cell(v)).join("") + cell(R.remainingTotal) + '</tr>';
-    const table = '<div class="fin-gridwrap"><table class="fin-grid"><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div>';
-    const other = R.other.length ? section("Other modules", '<div class="fin-gridwrap"><table class="fin-grid"><thead>' + head + '</thead><tbody>' +
+    const table = '<div class="fin-gridwrap fin-desk"><table class="fin-grid"><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div>';
+    const other = R.other.length ? section("Other modules", '<div class="fin-gridwrap fin-desk"><table class="fin-grid"><thead>' + head + '</thead><tbody>' +
       R.other.map(o => '<tr><th class="fin-rh fin-item">' + esc(o.name) + '</th>' + o.cells.map(v => cell(v)).join("") + cell(o.total) + '</tr>').join("") + '</tbody></table></div>' +
       '<p class="hint">Logged in those modules; shown on their own so nothing counts twice.</p>') : "";
     // Start the grid scrolled to this month (the months before it are often empty).
     setTimeout(() => $$(".fin-gridwrap").forEach(w => { const th = $("th.cur", w); if (th && !w.dataset.scrolled) { w.dataset.scrolled = "1"; w.scrollLeft = Math.max(0, th.offsetLeft - $(".fin-rh", w).offsetWidth - 8); } }), 0);
-    const html = yearNav(y) + (R.sections.some(s => s.rows.length) ? table : '<div class="card"><div class="empty">Nothing for ' + R.year + ' yet.</div></div>') +
+    const html = yearNav(y) + (R.sections.some(s => s.rows.length) ? table + reportList(R) : '<div class="card"><div class="empty">Nothing for ' + R.year + ' yet.</div></div>') +
       '<p class="hint">Remaining = income minus every bill group. <span class="proj-key">Gray</span> amounts are projected from the schedule (no entry made yet). Skipped entries count as $0.</p>' + other;
     return { title: "Reports", back: true, html: html };
+  }
+  // Phones: each line shows its year total; tap it to see the months as rows.
+  function reportList(R) {
+    const fmt = v => (v < 0 ? "-" : "") + "$" + Math.round(Math.abs(v)).toLocaleString();
+    const sum = a => a.reduce((x, y) => x + y, 0);
+    const line = (key, name, cells, proj, total, cls, href) => {
+      const open = !!fin.openRows[key];
+      return '<div class="fin-ml ' + (cls || "") + (open ? " open" : "") + '"><button class="fin-ml-row" data-fin="row" data-key="' + esc(key) + '" aria-expanded="' + open + '">' +
+        '<span class="fin-ml-name">' + esc(name) + '</span><span class="fin-ml-tot' + (total < 0 ? " neg" : "") + '">' + esc(fmt(total)) + '</span><span class="fin-ml-chev" aria-hidden="true">' + ICONS.next + '</span></button>' +
+        (open ? '<div class="fin-ml-months">' + cells.map((v, i) => '<div class="' + (proj && proj[i] ? "proj" : "") + (v < 0 ? " neg" : "") + '"><span>' + MONTHS[i] + '</span><span>' + (v ? esc(fmt(v)) : "–") + '</span></div>').join("") +
+          (href ? '<a class="fin-ml-link" href="' + href + '">Open</a>' : "") + '</div>' : "") + '</div>';
+    };
+    let out = "";
+    R.sections.forEach(s => {
+      out += '<div class="card fin-mlcard">' + line("g:" + s.name, s.name, s.total, null, sum(s.total), "grp") +
+        s.rows.map(r => line("r:" + r.id, r.name, r.cells, r.proj, r.total, "item", "#/financial/" + (s.kind === "income" ? "inc" : "bill") + "/" + encodeURIComponent(r.id))).join("") + '</div>';
+    });
+    out += '<div class="card fin-mlcard">' + line("remaining", "Remaining", R.remaining, null, R.remainingTotal, "grp rem") + '</div>';
+    if (R.other.length) out += '<h3 class="fin-ml-h">Other modules</h3><div class="card fin-mlcard">' + R.other.map(o => line("o:" + o.name, o.name, o.cells, null, o.total, "item")).join("") + '</div>';
+    return '<div class="fin-mlist">' + out + '</div>';
   }
   const yearNav = y => '<div class="fin-yearnav"><button class="btn" data-fin="year" data-y="' + (y - 1) + '" aria-label="Previous year">‹</button><b>' + y + '</b><button class="btn" data-fin="year" data-y="' + (y + 1) + '" aria-label="Next year">›</button></div>';
 
@@ -588,6 +609,7 @@
       case "edit-option": { const o = byId("options", d.id); if (o) optionForm(o["Plan ID"], d.id); break; }
       case "hockey": hockeyForm(d.id); break;
       case "year": fin.reportYear = +d.y; C.render(); break;
+      case "row": fin.openRows[d.key] = !fin.openRows[d.key]; C.render(); break;
       case "default-days":
         try {
           C.busy(true);

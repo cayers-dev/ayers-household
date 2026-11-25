@@ -48,3 +48,7 @@ Front-end files: `app.js` (core), `modules.js` (shared module screens: forms, li
 | shopping | Shopping List | Active (spreadsheet "Ayers Household - Shopping List") |
 
 Requirements and decisions: the "Household App Set Up - with Follow-Up Questions" Google Doc.
+
+## Planned
+
+- Export reports (Financial month grid and others) to a file.

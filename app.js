@@ -9,7 +9,7 @@
   const CFG = window.HH_CONFIG || {};
   const TOKEN_KEY = "hh_id_token";     // Google sign-in pass (only until the server gives a session)
   const SESSION_KEY = "hh_session";    // the app's own session: { token, exp }
-  const APP_VERSION = "26";
+  const APP_VERSION = "27";
 
   const state = {
     token: null, session: null, sessionExp: 0,
@@ -256,6 +256,7 @@
       state.log = null;
       render();
       if (!silent) toast("Up to date");
+      pullGoogleTasks();
     } catch (err) { handleError(err); } finally { busy(false); }
   }
 
@@ -336,6 +337,15 @@
     catch (err) { state.booting = false; handleError(err); return; }
     state.booting = false;
     render();
+    pullGoogleTasks();
+  }
+
+  // Changes made in Google Tasks come in after Home is showing (the server checks at most every 10 minutes).
+  function pullGoogleTasks() {
+    if (!state.modules.some(m => m.key === "tasks" && m.status === "Active")) return;
+    api("tasks.pull", { module: "tasks", every: "home" }).then(r => {
+      if (r && r.changed) { if (MODULE_RESETS.tasks) MODULE_RESETS.tasks(); refreshInBackground(); }
+    }).catch(() => { /* quietly try again next time */ });
   }
 
   function signOut() {
@@ -459,6 +469,7 @@
     const tasks = state.tasks || [];
     const tasksOn = state.modules.some(m => m.key === "tasks" && m.status === "Active" && MODULE_VIEWS.tasks);
     const taskWhen = t => {
+      if (!t.due) return "";
       const d = new Date(t.due + "T12:00:00"), today = new Date(); today.setHours(12, 0, 0, 0);
       const diff = Math.round((d - today) / 86400000);
       const day = diff === 0 ? "Today" : diff === 1 ? "Tomorrow" : diff < 0 ? "Overdue · " + d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
@@ -800,7 +811,7 @@
     const close = () => { back.remove(); if (!$(".sheet-backdrop")) document.body.style.overflow = ""; if (opts.onClose) opts.onClose(); };
     form._close = close;
     $$("[data-close]", back).forEach(b => b.addEventListener("click", close));
-    back.addEventListener("click", e => { if (e.target === back) close(); });
+    // Clicking outside the pop-up doesn't close it (nothing typed is lost); use Cancel or ✕.
     if (opts.onReady) opts.onReady(form, close);
     form.addEventListener("submit", async e => {
       e.preventDefault();

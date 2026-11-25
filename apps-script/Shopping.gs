@@ -145,7 +145,8 @@ function shoppingClearChecked_(req, user) {
    return { removed: rows.length };
 }
 
-// req: { items: [{ item, quantity }], store, category, urgent } -> one item per row
+// req: { items: [{ item, quantity, urgent }], store, category, urgent } -> one item per row
+// (urgent on a line marks that item; urgent on the request marks them all)
 // (or lines: "Milk\nEggs" for one per line). Items already on the list (same name and store)
 // are skipped and named in the reply.
 function shoppingAddMany_(req, user) {
@@ -158,7 +159,7 @@ function shoppingAddMany_(req, user) {
       return m.value;
    };
    const store = pick("Store", req.store), category = pick("Category", req.category);
-   const given = Array.isArray(req.items) ? req.items.map(x => ({ item: x && x.item, quantity: x && x.quantity }))
+   const given = Array.isArray(req.items) ? req.items.map(x => ({ item: x && x.item, quantity: x && x.quantity, urgent: !!(x && x.urgent === true) }))
       : String(req.lines || "").split(/\r?\n/).map(x => ({ item: x }));
    const seen = {}, wanted = [];
    given.forEach(x => {
@@ -170,7 +171,7 @@ function shoppingAddMany_(req, user) {
          if (isNaN(q) || q < 0) throw coreError_("INVALID", "Quantity for " + n + " must be a number.");
       }
       seen[shoppingKey_(n)] = true;
-      wanted.push({ name: n, qty: q });
+      wanted.push({ name: n, qty: q, urgent: x.urgent === true });
    });
    const names = wanted.map(w => w.name);
    if (!names.length) throw coreError_("INVALID", "Type at least one item.");
@@ -180,7 +181,7 @@ function shoppingAddMany_(req, user) {
    wanted.forEach(w => {
       const n = w.name;
       if (onList.some(r => shoppingKey_(r["Item"]) === shoppingKey_(n) && shoppingSameStore_(r["Store"], store))) { skipped.push(n); return; }
-      rows.push({ "Item": n, "Quantity": w.qty, "Store": store, "Category": category, "Urgent": req.urgent === true, "Status": "Needed" });
+      rows.push({ "Item": n, "Quantity": w.qty, "Store": store, "Category": category, "Urgent": req.urgent === true || w.urgent, "Status": "Needed" });
    });
    const ids = modBulkInsert_(def, "items", rows, user);
    return { added: ids.length, skipped: skipped };

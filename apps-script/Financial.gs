@@ -28,7 +28,7 @@ const FIN_FOLDERS = {
    entries: { id: "1agapalEILSsj3qHxRY7Ht5WpjU5C5bgH", label: "Statement" }
 };
 const FIN_AREAS = ["bills", "income", "loans", "accounts", "plans", "reports"];
-const FIN_FREQ = ["Weekly", "Every 2 weeks", "Twice a month", "Monthly", "Every 2 months", "Quarterly", "Every 6 months", "Annually", "Every N months", "One-time"];
+const FIN_FREQ = ["Weekly", "Every 2 weeks", "Twice a month", "Monthly", "Last weekday of the month", "Every 2 months", "Quarterly", "Every 6 months", "Annually", "Every N months", "One-time"];
 const FIN_AHEAD_MONTHS = 3;
 const FIN_SYNC_SECONDS = 600;
 // Bills and income work the same way; these name the parts that differ.
@@ -39,13 +39,14 @@ const FIN_KINDS = {
 const FIN_SCHEDULE_FIELDS = ["Frequency", "Every N Months", "Start Date", "Second Day", "End Date"];
 
 function financialDef_() {
-   const scheduleFields = [
+   // Bills are due; income is received (same fields, its own words).
+   const scheduleFields = (word, noun) => [
       { name: "Amount", type: "money", required: true, hint: "Default amount for each one" },
       { name: "Frequency", type: "choice", options: FIN_FREQ, required: true, default: "Monthly" },
       { name: "Every N Months", type: "number", hint: "Only for “Every N months”" },
-      { name: "Start Date", label: "First Due Date", type: "date", required: true, hint: "Sets the day it's due (e.g. the 15th)" },
-      { name: "Second Day", label: "Second Due Day", type: "number", hint: "Only for “Twice a month”, e.g. 15" },
-      { name: "End Date", label: "Last Due Date", type: "date", hint: "Blank = keeps going" }
+      { name: "Start Date", label: "First " + noun + " Date", type: "date", required: true, hint: "Sets the day it's " + word + " (e.g. the 15th). For “Last weekday of the month”, any day in the first month." },
+      { name: "Second Day", label: "Second " + noun + " Day", type: "number", hint: "Only for “Twice a month”, e.g. 15" },
+      { name: "End Date", label: "Last " + noun + " Date", type: "date", hint: "Blank = keeps going" }
    ];
    const entryFields = (ref, refLabel, statuses, dateLabel, paidLabel) => [
       { name: ref, label: refLabel, type: "ref", ref: ref === "Bill ID" ? "bills" : "income", required: true },
@@ -65,14 +66,14 @@ function financialDef_() {
                { name: "Name", type: "text", required: true, hint: "e.g. AT&T (Cell Phone Service)" },
                { name: "Group", type: "list", list: "Group", required: true, default: "Expenses" },
                { name: "Category", type: "list", list: "Category" }
-            ].concat(scheduleFields).concat([
+            ].concat(scheduleFields("due", "Due")).concat([
                { name: "Autopay", type: "bool", hint: "Marks itself paid on the due date" },
                { name: "Paid By", type: "list", list: "Person", default: "Chris" },
                { name: "Account ID", label: "Paid From", type: "ref", ref: "accounts" },
                { name: "Loan ID", label: "Loan", type: "ref", ref: "loans", hint: "Payments lower this loan's balance" },
                { name: "Plan ID", label: "Saving Toward", type: "ref", ref: "plans", hint: "Payments add to this goal's saved amount" },
                { name: "Reminder", label: "Reminder task", type: "bool", hint: "A task for each payment (Tasks)" },
-               { name: "Reminder To", type: "user", default: "USR-1" },
+               { name: "Reminder To", type: "users", default: "USR-1", hint: "Each person gets a task; ticking any one marks the bill paid" },
                { name: "Reminder Days", label: "Days before due", type: "number", default: 3 },
                { name: "Notes", type: "longtext" }
             ]) },
@@ -80,7 +81,7 @@ function financialDef_() {
             title: r => r["Name"],
             fields: [
                { name: "Name", label: "Source", type: "text", required: true, hint: "e.g. CVUSD – Chris" }
-            ].concat(scheduleFields).concat([
+            ].concat(scheduleFields("received", "Received")).concat([
                { name: "Autopay", label: "Received automatically", type: "bool", hint: "Direct deposit: marks itself received on the date" },
                { name: "Account ID", label: "Deposited To", type: "ref", ref: "accounts" },
                { name: "Notes", type: "longtext" }
@@ -101,7 +102,7 @@ function financialDef_() {
                { name: "Notes", type: "longtext" },
                { name: "Scheduled For", type: "date", readOnly: true }
             ]) },
-         loans: { tab: "Loans", label: "Loans", id: "Loan ID", prefix: "LN-", kind: "record", area: "loans",
+         loans: { tab: "Loans", label: "Loans", id: "Loan ID", prefix: "LN-", kind: "record", area: "loans", addNew: true,
             title: r => r["Name"],
             fields: [
                { name: "Name", type: "text", required: true, hint: "e.g. Nissan (Rogue)" },
@@ -138,7 +139,7 @@ function financialDef_() {
                { name: "Balance Date", label: "Balance as of", type: "date" },
                { name: "Notes", type: "longtext", hint: "No full account numbers or passwords" }
             ] },
-         plans: { tab: "Plans", label: "Plan / Save For", id: "Plan ID", prefix: "PLN-", kind: "record", area: "plans",
+         plans: { tab: "Plans", label: "Plan / Save For", id: "Plan ID", prefix: "PLN-", kind: "record", area: "plans", addNew: true,
             title: r => r["Goal"],
             fields: [
                { name: "Goal", type: "text", required: true, hint: "e.g. Disneyland passes" },
@@ -233,6 +234,7 @@ function finPerMonth_(it) {
       case "Weekly": return 52 / 12;
       case "Every 2 weeks": return 26 / 12;
       case "Twice a month": return 2;
+      case "Last weekday of the month": return 1;
       case "One-time": return 0;
    }
    const s = finStepMonths_(it);
@@ -249,6 +251,17 @@ function finEach_(it, fn) {
    if (f === "Weekly" || f === "Every 2 weeks") {
       const step = f === "Weekly" ? 7 : 14;
       for (let k = 0; k < 6000; k++) if (!go(vehAddDays_(start, k * step))) return;
+      return;
+   }
+   if (f === "Last weekday of the month") {
+      for (let k = 0; k < 2400; k++) {
+         const first = vehAddMonths_(start.slice(0, 8) + "01", k);
+         const d = new Date(Date.UTC(+first.slice(0, 4), +first.slice(5, 7), 0));   // last day of the month
+         while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() - 1);
+         const iso = first.slice(0, 8) + String(d.getUTCDate()).padStart(2, "0");
+         if (iso < start) continue;
+         if (!go(iso)) return;
+      }
       return;
    }
    if (f === "Twice a month") {
@@ -351,7 +364,7 @@ function finClearUpcoming_(def, kind, itemId, user, includeOpen) {
    const gone = modRows_(def, K.entries, true).filter(e => e[K.id] === itemId && !e["Deleted"] &&
       (e["Status"] === "Scheduled" || (includeOpen && e["Status"] === K.open))).sort((a, b) => b._row - a._row);
    gone.forEach(e => {
-      if (kind === "bills" && e["Reminder Task"] && finTasksOn_()) { try { tasksUpsertAuto_("financial:" + e["Entry ID"], null, user); } catch (err) { console.warn(err); } }
+      if (kind === "bills" && e["Reminder Task"] && finTasksOn_()) { try { finRemoveReminders_(e["Entry ID"], user); } catch (err) { console.warn(err); } }
       modRemoveRow_(def, K.entries, e);
    });
    return gone.length;
@@ -382,25 +395,40 @@ function finSyncAction_(req, user) {
 // ------------------------------------------------------------
 // Reminder tasks (Tasks module): one per unpaid entry of a bill with "Reminder task" ticked
 // ------------------------------------------------------------
+function finReminderPeople_(bill) {
+   return String((bill && bill["Reminder To"]) || "USR-1").split(",").map(x => x.trim()).filter(Boolean);
+}
+// Takes an entry's reminder tasks off the task list (every person, and the older one-task key).
+function finRemoveReminders_(entryId, user, keep) {
+   if (!finTasksOn_()) return;
+   const base = "financial:" + entryId;
+   tasksUpsertAuto_(base, null, user);
+   coreGetUsers_(true).forEach(u => { if (!keep || keep.indexOf(u.id) === -1) tasksUpsertAuto_(base + ":" + u.id, null, user); });
+}
+// One task per reminder person for each unpaid entry ("financial:<entry>:<person>"). Paid = every task done.
 function finReminder_(def, e, bill, user) {
    if (!finTasksOn_() || !e) return;
-   const key = "financial:" + e["Entry ID"];
+   const base = "financial:" + e["Entry ID"];
    try {
       const want = bill && bill["Reminder"] === true && !bill["Deleted"] && !e["Deleted"] && e["Status"] !== "Skipped";
       if (!want) {
-         if (e["Reminder Task"]) { tasksUpsertAuto_(key, null, user); finSys_(def, "entries", e, { "Reminder Task": "" }); }
+         if (e["Reminder Task"]) { finRemoveReminders_(e["Entry ID"], user); finSys_(def, "entries", e, { "Reminder Task": "" }); }
          return;
       }
       if (!finUnpaid_(e) && !e["Reminder Task"]) return;   // already paid before a task was made
+      const people = finReminderPeople_(bill);
       const days = bill["Reminder Days"] === "" || bill["Reminder Days"] === undefined ? 3 : Math.max(0, Number(bill["Reminder Days"]) || 0);
       const due = finIso_(e["Due Date"]);
-      const tid = tasksUpsertAuto_(key, {
+      finRemoveReminders_(e["Entry ID"], user, people);   // anyone taken off the reminder (and the older one-task key)
+      const ids = people.map(p => tasksUpsertAuto_(base + ":" + p, {
          "Title": "Pay " + bill["Name"] + " · " + finMoney_(e["Amount"]),
-         "Notes": "Due " + vehNiceDate_(due) + (bill["Autopay"] === true ? " (autopay)" : "") + ". From Financial: " + e["Entry ID"] + " · " + bill["Bill ID"] + " " + bill["Name"] + ".",
-         "Assigned To": bill["Reminder To"] || "USR-1", "Due Date": vehAddDays_(due, -days), "Category": "Financial",
+         "Notes": "Due " + vehNiceDate_(due) + (bill["Autopay"] === true ? " (autopay)" : "") + ". From Financial: " + e["Entry ID"] + " · " + bill["Bill ID"] + " " + bill["Name"] + "." +
+            (people.length > 1 ? " Ticking any one of these tasks marks it paid." : ""),
+         "Assigned To": p, "Due Date": vehAddDays_(due, -days), "Category": "Financial",
          "Source": "Financial " + bill["Bill ID"], "Done": !finUnpaid_(e)
-      }, user);
-      if (tid && tid !== e["Reminder Task"]) finSys_(def, "entries", e, { "Reminder Task": tid });
+      }, user)).filter(Boolean);
+      const tids = ids.join(",");
+      if (tids !== String(e["Reminder Task"] || "")) finSys_(def, "entries", e, { "Reminder Task": tids });
    } catch (err) { console.warn("Reminder task not updated: " + err); }
 }
 // Reminders for some entries (by ID) or for every entry of one bill.
@@ -413,12 +441,17 @@ function finRemind_(def, entryIds, user, billId) {
       .forEach(e => { const b = bills[e["Bill ID"]]; if (b && (b["Reminder"] === true || e["Reminder Task"])) finReminder_(def, e, b, user); });
    modForget_(def, "entries");
 }
-// Called by Tasks when a reminder task is ticked done: the bill entry is marked paid (today).
-function finTaskDone_(entryId, user) {
+// Called by Tasks when a reminder task is ticked done: the bill entry is marked paid (today), and the
+// other people's reminder tasks for it are completed too.
+function finTaskDone_(key, user) {
+   const entryId = String(key).split(":")[0];
    const def = financialDef_();
    const e = modRows_(def, "entries").find(x => x["Entry ID"] === entryId);
    if (!e || !finUnpaid_(e)) return;
    modChange_(def, "entries", e, { "Status": "Paid", "Paid Date": coreDate_(vehToday_()) }, user, "Paid (task done)");
+   modForget_(def, "entries");
+   const fresh = modRows_(def, "entries").find(x => x["Entry ID"] === entryId);
+   finReminder_(def, fresh, vehFind_(def, "bills", e["Bill ID"]), user);
 }
 
 // ------------------------------------------------------------
@@ -500,7 +533,7 @@ function finAfterDelete_(tableKey, row, user) {
    const def = financialDef_();
    if (tableKey === "bills" || tableKey === "income") finClearUpcoming_(def, tableKey, row[FIN_KINDS[tableKey].id], user, true);
    if (tableKey === "entries" && row["Reminder Task"] && finTasksOn_()) {
-      try { tasksUpsertAuto_("financial:" + row["Entry ID"], null, user); } catch (e) { console.warn(e); }
+      try { finRemoveReminders_(row["Entry ID"], user); } catch (e) { console.warn(e); }
    }
    if (tableKey === "options") {
       modRows_(def, "optlines").filter(l => l["Option ID"] === row["Option ID"]).sort((a, b) => b._row - a._row)

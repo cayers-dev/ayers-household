@@ -52,14 +52,39 @@
   const repeatText = r => Number(r["Repeat Every"]) >= 1 && r["Repeat Unit"] ? "Every " + (Number(r["Repeat Every"]) === 1 ? r["Repeat Unit"].toLowerCase().replace(/s$/, "") : r["Repeat Every"] + " " + r["Repeat Unit"].toLowerCase()) +
     (r["Repeat Unit"] === "Weeks" && r["Repeat Days"] ? " on " + r["Repeat Days"].split(",").join(", ") : "") : "";
 
-  async function load() {
-    tk.loading = true; tk.error = "";
+  async function load(quiet) {
+    tk.loading = true; if (!quiet) tk.error = "";
     try { tk.data = await C.api("tasks.load"); }
     catch (err) {
       if (["AUTH", "NOT_ALLOWED", "SETUP"].indexOf(err.code) !== -1) { tk.loading = false; C.handleError(err); return; }
-      tk.error = err.message;
+      if (!quiet) tk.error = err.message;
     } finally { tk.loading = false; }
     if (C.parseRoute().name === "tasks") C.render();
+    if (!quiet) pull();
+  }
+  // The list shows at once; changes made in Google Tasks come in right after (checked at most once a minute).
+  function pull() {
+    const g = (D() && D().google) || {};
+    if (!g.connected) return;
+    C.api("tasks.pull", { module: "tasks", every: "load" }).then(r => { if (r && r.changed) { C.state.homeStale = true; load(true); } }).catch(() => { /* next time */ });
+  }
+  // Saves without the busy bar (the change already shows); applies the fresh list when it comes back.
+  async function quietSave(action, payload, msg, undo) {
+    try {
+      const res = await C.api(action, Object.assign({ module: "tasks", reload: true }, payload));
+      if (res && res.moduleData) tk.data = res.moduleData;
+      if (msg) toast(typeof msg === "function" ? msg(res) : msg);
+      C.state.homeStale = true;
+      C.render();
+      return res;
+    } catch (err) {
+      if (undo) undo();
+      C.render();
+      if (["AUTH", "NOT_ALLOWED", "SETUP"].indexOf(err.code) !== -1) return C.authStop(err);
+      toast(err.message, true);
+      if (err.code === "FORBIDDEN" || err.code === "STALE") load(true);
+      return null;
+    }
   }
 
   const ctx = {
@@ -168,14 +193,14 @@
   // Screens
   // ------------------------------------------------------------------
   function taskRow(r) {
-    const done = isDone(r), st = steps(r), tickable = canTick(r);
+    const done = isDone(r), st = steps(r), pending = !!r._pending, tickable = canTick(r) && !pending;
     const today = D().today, overdue = !done && r["Due Date"] && r["Due Date"] < today;
     const sub = [dueText(r), r["Status"] !== "To do" && !done ? r["Status"] : "", r["Category"], st.length ? st.filter(s => s.done).length + " of " + st.length + " steps" : "",
       r["Assigned To"] ? (r["Assigned To"] !== me() ? M.userName(ctx, r["Assigned To"]) : "") : "Household", done && r["Completed At"] ? "Done " + M.fmtDay(r["Completed At"]) : ""].filter(Boolean).join(" · ");
-    return '<div class="list-item tk-item' + (r["Priority"] === "High" ? " high" : "") + (done ? " done" : "") + '">' +
+    return '<div class="list-item tk-item' + (r["Priority"] === "High" ? " high" : "") + (done ? " done" : "") + (pending ? " pending" : "") + '">' +
       (tickable ? '<button class="sh-check' + (done ? " on" : "") + '" data-tk="tick" data-id="' + esc(r["Task ID"]) + '" aria-pressed="' + done + '" aria-label="' + (done ? "Reopen " : "Complete ") + esc(r["Title"]) + '">' + (done ? IC.check : "") + '</button>'
         : '<span class="sh-check off' + (done ? " on" : "") + '" aria-hidden="true">' + (done ? IC.check : "") + '</span>') +
-      '<a class="body" href="#/tasks/t/' + encodeURIComponent(r["Task ID"]) + '"><div class="title">' + (r["Priority"] === "High" && !done ? '<span class="tk-hi" aria-label="High priority">!</span> ' : "") + esc(r["Title"]) +
+      '<a class="body"' + (pending ? "" : ' href="#/tasks/t/' + encodeURIComponent(r["Task ID"]) + '"') + '><div class="title">' + (r["Priority"] === "High" && !done ? '<span class="tk-hi" aria-label="High priority">!</span> ' : "") + esc(r["Title"]) +
         (repeatText(r) ? ' <span class="tk-rep" title="' + esc(repeatText(r)) + '">' + IC.repeat + '</span>' : "") + '</div>' +
         (sub ? '<div class="sub' + (overdue ? " overdue" : "") + '">' + esc(sub) + '</div>' : "") + '</a></div>';
   }
@@ -208,6 +233,9 @@
         '<input id="tk_due" type="date" aria-label="Due date">' +
         '<button class="btn primary" data-tk="add" aria-label="Add">' + ICONS.plus + '</button><button class="btn" data-tk="more">More</button></div>' : "";
     const doneList = list.filter(isDone).sort((a, b) => String(b["Completed At"]).localeCompare(String(a["Completed At"])));
+    // Household tasks always show (under their own heading) on a person's list.
+    const household = (w === "mine" || /^USR-/.test(w)) ? all.filter(r => !r["Assigned To"] && !isDone(r)).sort(sorter) : [];
+    if (household.length) groups.push(["Household", household]);
     const body = groups.length ? groups.map(g => '<div class="sh-group"><div class="sh-grouphead' + (g[0] === "Overdue" ? " tk-over" : "") + '">' + esc(g[0]) + '<span>' + g[1].length + '</span></div><div class="card list">' + g[1].map(taskRow).join("") + '</div></div>').join("")
       : '<div class="card"><div class="empty">' + (w === "shared" ? "No household tasks." : "Nothing to do here.") + '</div></div>';
     const doneHtml = '<label class="check tk-donetoggle"><input type="checkbox" data-tk="showdone"' + (tk.showDone ? " checked" : "") + '> Show completed (' + doneList.length + ')</label>' +
@@ -315,13 +343,15 @@
   // ------------------------------------------------------------------
   // Events
   // ------------------------------------------------------------------
+  // Tick: shows done (or open) at once, then saves.
   async function tick(id) {
     const r = rows("tasks").find(x => x["Task ID"] === id);
     if (!r) return;
-    const done = !isDone(r);
-    try {
-      await ctx.save("tasks.complete", { id: id, done: done }, res => done ? (res && res.moduleData && rows("tasks").length ? "Done" : "Done") : "Reopened");
-    } catch (err) { toast(err.message, true); }
+    const done = !isDone(r), was = { s: r["Status"], c: r["Completed At"] };
+    r["Status"] = done ? DONE : "To do";
+    r["Completed At"] = done ? new Date().toLocaleString("sv").replace(" ", "T").slice(0, 16) : "";
+    C.render();
+    quietSave("tasks.complete", { id: id, done: done }, done ? "Done" : "Reopened", () => { r["Status"] = was.s; r["Completed At"] = was.c; });
   }
   function quickAdd() {
     const input = $("#tk_add"), due = $("#tk_due");
@@ -329,7 +359,13 @@
     if (!title) { if (input) input.focus(); return; }
     const values = Object.assign(ctx.defaults("tasks"), { "Title": title });
     if (due && due.value) values["Due Date"] = due.value;
-    ctx.save("modAdd", { table: "tasks", values: values }, "Task added").then(() => { const i = $("#tk_add"); if (i) i.focus(); }).catch(err => toast(err.message, true));
+    // Shows at once (dimmed until saved); the boxes are ready for the next one.
+    const tmp = Object.assign({}, values, { "Task ID": "tmp-" + Date.now(), "Added By": me(), _pending: true });
+    rows("tasks").push(tmp);
+    input.value = ""; if (due) due.value = "";
+    C.render();
+    const i = $("#tk_add"); if (i) i.focus();
+    quietSave("modAdd", { table: "tasks", values: values }, "Task added", () => { const a = rows("tasks"); const k = a.indexOf(tmp); if (k !== -1) a.splice(k, 1); });
   }
   document.addEventListener("click", e => {
     if (e.target.closest("[data-act='refresh']") && C.parseRoute().name === "tasks") tk.data = null;

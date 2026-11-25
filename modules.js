@@ -67,7 +67,7 @@
   }
   // Can this person add a new choice to the field's list from inside a form?
   function canAddChoice(ctx, f) {
-    if (f.type === "ref") return ctx.schema(f.ref).kind === "list" && tableCan(ctx, f.ref, "add");
+    if (f.type === "ref") return (ctx.schema(f.ref).kind === "list" || ctx.schema(f.ref).addNew === true) && tableCan(ctx, f.ref, "add");
     if (f.type === "list") return tableCan(ctx, "lists", "add", null, { "List": f.list });
     return false;
   }
@@ -82,6 +82,7 @@
     if (f.type === "datetime") return fmtDayTime(v);
     if (f.type === "time") return fmtTime("T" + v);
     if (f.type === "user") return userName(ctx, v);
+    if (f.type === "users") return String(v).split(",").filter(Boolean).map(id => userName(ctx, id)).join(", ");
     if (f.type === "file") return v ? "File attached" : "";
     if (f.type === "ref") {
       const rt = ctx.schema(f.ref), r = ctx.rows(f.ref).find(x => x[rt.id] === v);
@@ -120,6 +121,13 @@
           choices.map(c => '<option value="' + esc(c.value) + '"' + (String(c.value) === String(v) ? " selected" : "") + '>' + esc(c.label) + '</option>').join("") +
           (canAddChoice(ctx, f) ? '<option value="' + NEW + '">＋ Add new…</option>' : "") + '</select>';
         break;
+      }
+      case "users": {
+        // Tick boxes, one per person; the hidden input holds "USR-1,USR-2".
+        const users = (ctx.data().users || []), picked = String(v).split(",").filter(Boolean);
+        return '<div class="field"><label>' + label + (f.required ? ' <span class="req">*</span>' : "") + '</label><div class="users-pick">' +
+          users.map(u => '<label class="check"><input type="checkbox" data-users-for="' + esc(f.name) + '" value="' + esc(u.id) + '"' + (picked.indexOf(u.id) !== -1 ? " checked" : "") + '> ' + esc(u.name) + '</label>').join("") +
+          '</div><input type="hidden" name="' + esc(f.name) + '" value="' + esc(picked.join(",")) + '">' + hint + '</div>';
       }
       case "user": {
         const users = (ctx.data().users || []);
@@ -490,6 +498,14 @@
       : '<div class="card"><div class="empty">Nothing has been deleted.</div></div>';
     return { title: "Deleted items", back: true, html: html + '<p class="hint">Deleted entries are hidden everywhere until you restore them. Permanent deletes are always written to the Change Log.</p>' };
   }
+
+  // Several-people pickers: keep the hidden value in step with the tick boxes.
+  document.addEventListener("change", e => {
+    const c = e.target;
+    if (!c || !c.dataset || !c.dataset.usersFor) return;
+    const field = c.closest(".field"), hidden = field && field.querySelector('input[type="hidden"][name="' + c.dataset.usersFor + '"]');
+    if (hidden) hidden.value = $$('input[data-users-for]', field).filter(x => x.checked).map(x => x.value).join(",");
+  });
 
   // Clicks for the shared screens (each module passes its ctx via HH_MOD.current).
   document.addEventListener("click", async e => {

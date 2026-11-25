@@ -133,7 +133,7 @@ function modSchema_(def) {
    Object.keys(def.tables).forEach(k => {
       const t = def.tables[k];
       out[k] = {
-         label: t.label, id: t.id, kind: t.kind, area: t.area, adminOnly: !!t.adminOnly, prefix: t.prefix, listAreas: t.listAreas || null,
+         label: t.label, id: t.id, kind: t.kind, area: t.area, adminOnly: !!t.adminOnly, prefix: t.prefix, listAreas: t.listAreas || null, addNew: !!t.addNew,
          fields: t.fields.map(f => Object.assign({}, f, f.list ? { options: modListValues_(def, f.list).filter(v => v.active).map(v => v.value) } : {}))
       };
    });
@@ -224,6 +224,11 @@ function modClean_(def, t, raw, user, before) {
          if (rt.kind === "list" && target["Active"] === false) throw coreError_("INVALID", (f.label || f.name) + ": that choice is turned off.");
       } else if (v !== "" && f.type === "user" && !same) {
          if (!coreGetUsers_().some(u => u.id === v)) throw coreError_("INVALID", (f.label || f.name) + ": unknown person.");
+      } else if (f.type === "users") {
+         // Several people: "USR-1,USR-2" (an array is fine too).
+         const ids = (Array.isArray(v) ? v : String(v).split(",")).map(x => String(x).trim()).filter((x, i, a) => x && a.indexOf(x) === i);
+         if (!same) ids.forEach(id => { if (!coreGetUsers_().some(u => u.id === id)) throw coreError_("INVALID", (f.label || f.name) + ": unknown person."); });
+         v = ids.join(",");
       }
       out[f.name] = v;
    });

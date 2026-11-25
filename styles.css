@@ -857,15 +857,19 @@ body.syncing::before { content: ""; position: fixed; top: 0; left: 0; right: 0; 
   padding: 18px 22px; box-shadow: var(--shadow); font-weight: 650; max-width: calc(100% - 48px); }
 .sh-removing-box .spinner { flex: none; }
 .sh-add #sh_qty { flex: 0 0 64px; width: 64px; padding: 11px 8px; text-align: center; }
-.sh-item.pending { opacity: .55; }
+.sh-item.pending, .tk-item.pending { opacity: .55; }
 .sh-item.pending .sh-check { border-style: dashed; }
 .sh-grid { margin: 0 0 14px; }
-.sh-grid-head, .sh-grid-row { display: grid; grid-template-columns: 1fr 72px; gap: 8px; }
+.sh-grid-head, .sh-grid-row { display: grid; grid-template-columns: 1fr 72px 62px; gap: 8px; align-items: center; }
 .sh-grid-head { font-size: 13px; font-weight: 650; color: var(--muted); margin: 0 2px 6px; }
 .sh-grid-rows { display: flex; flex-direction: column; gap: 6px; }
-.sh-grid-row input { width: 100%; min-width: 0; padding: 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-size: 16px; }
+.sh-grid-row input:not([type=checkbox]) { width: 100%; min-width: 0; padding: 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-size: 16px; }
 .sh-grid-row input[type=number] { text-align: center; }
 .sh-grid-more { margin-top: 8px; padding: 0; }
+.sh-grid-u { display: flex; align-items: center; justify-content: center; gap: 4px; }
+.sh-grid-u input { width: 22px; height: 22px; accent-color: var(--danger); }
+.sh-grid-head .sh-grid-u { font-size: 12px; }
+.sh-grid-head .sh-grid-u input { width: 16px; height: 16px; }
 
 /* ---------- Files (photos, cards, receipts) ---------- */
 .file-field .file-current { margin: 4px 0 8px; }
@@ -1026,3 +1030,28 @@ img.thumb[data-file-id] { cursor: pointer; }
 .fin-grid td.proj { color: var(--muted); font-style: italic; }
 .fin-grid td.neg { color: var(--danger); }
 .proj-key { color: var(--muted); font-style: italic; }
+
+/* Reports on phones: totals, tap for months */
+.fin-mlist { display: none; }
+@media (max-width: 640px) {
+  .fin-desk { display: none; }
+  .section:has(> .fin-desk) { display: none; }
+  .fin-mlist { display: block; }
+}
+.fin-mlcard { padding: 0; margin-bottom: 10px; overflow: hidden; }
+.fin-ml + .fin-ml { border-top: 1px solid var(--border); }
+.fin-ml-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 12px 14px; background: none; border: 0; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.fin-ml.grp .fin-ml-row { font-weight: 700; background: var(--surface-2); }
+.fin-ml.rem .fin-ml-row { background: var(--primary-soft); color: var(--primary); }
+.fin-ml-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-ml-tot { font-variant-numeric: tabular-nums; }
+.fin-ml-tot.neg { color: var(--danger); }
+.fin-ml-chev svg { width: 16px; height: 16px; transition: transform .15s; color: var(--muted); }
+.fin-ml.open .fin-ml-chev svg { transform: rotate(90deg); }
+.fin-ml-months { padding: 2px 14px 10px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.fin-ml-months div { display: flex; justify-content: space-between; padding: 4px 0; border-top: 1px dashed var(--border); }
+.fin-ml-months div.proj span:last-child { color: var(--muted); font-style: italic; }
+.fin-ml-months div.neg span:last-child { color: var(--danger); }
+.fin-ml-link { display: inline-block; margin-top: 6px; font-size: 14px; }
+.fin-ml-h { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 14px 2px 8px; }
+.users-pick { display: flex; flex-wrap: wrap; gap: 4px 16px; }
