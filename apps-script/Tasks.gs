@@ -43,11 +43,14 @@ function tasksDef_() {
                { name: "Repeat Every", type: "number", hint: "Blank = doesn't repeat" },
                { name: "Repeat Unit", type: "choice", options: ["Days", "Weeks", "Months", "Years"] },
                { name: "Repeat Days", type: "text", hint: "For weekly repeats, e.g. Mon,Thu" },
-               { name: "Send to Google", type: "bool", default: true, hint: "Also put it in your Google Tasks (once sync is set up)" },
+               { name: "Send to Google", label: "Send to Google Tasks", type: "bool", hint: "Also put it in the person's Google Tasks (once they've connected)" },
                { name: "Completed At", type: "datetime", readOnly: true },
                { name: "Completed By", type: "user", readOnly: true },
                { name: "Next Task ID", type: "text", readOnly: true },
                { name: "Google Task ID", type: "text", readOnly: true },
+               { name: "Google Owner", type: "user", readOnly: true },
+               { name: "Google Hash", type: "text", readOnly: true },
+               { name: "Google Synced At", type: "datetime", readOnly: true },
                { name: "Source", type: "text", readOnly: true },
                { name: "Source Key", type: "text", readOnly: true }
             ] },
@@ -64,11 +67,17 @@ function tasksDef_() {
       guard: tasksGuard_,
       beforeSave: tasksBeforeSave_,
       afterSave: tasksAfterSave_,
+      afterDelete: (tableKey, row) => { if (tableKey === "tasks") gtPushId_(tasksDef_(), row["Task ID"]); },
       home: tasksHome_,
       actions: {
          load:     { fn: tasksLoad_ },
          complete: { fn: tasksComplete_, write: true },
-         check:    { fn: tasksCheck_, write: true }
+         check:    { fn: tasksCheck_, write: true },
+         gConnect:    { fn: tasksGConnect_, write: true },
+         gDisconnect: { fn: tasksGDisconnect_, write: true },
+         gDefault:    { fn: tasksGDefault_, write: true },
+         gSetSecret:  { fn: tasksGSetSecret_, write: true },
+         gSync:       { fn: tasksGSync_, write: true }
       }
    };
 }
@@ -111,6 +120,7 @@ function tasksBeforeSave_(tableKey, values, before, user) {
    if (merged["Repeat Every"] !== "" && merged["Repeat Every"] !== undefined && !merged["Repeat Unit"]) throw coreError_("INVALID", "Pick days, weeks, months or years for the repeat.");
    if ("Repeat Days" in values) values["Repeat Days"] = tasksDays_(values["Repeat Days"]).map(d => TASKS_WEEKDAYS[d]).join(",");
    if ("Checklist" in values) values["Checklist"] = tasksTidyChecklist_(values["Checklist"]);
+   if (!before && !("Send to Google" in values && values["Send to Google"] !== "")) values["Send to Google"] = gtDefaultSend_(merged["Assigned To"]);
    const wasDone = before && before["Status"] === TASKS_DONE, nowDone = merged["Status"] === TASKS_DONE;
    if (nowDone && !wasDone) { values["Completed At"] = new Date(); values["Completed By"] = user.id; }
    if (!nowDone && wasDone) { values["Completed At"] = ""; values["Completed By"] = ""; }
@@ -120,6 +130,7 @@ function tasksAfterSave_(tableKey, id, values, before, user) {
    if (tableKey !== "tasks") return;
    const def = tasksDef_();
    const wasDone = before && before["Status"] === TASKS_DONE;
+   gtPushId_(def, id);
    if (values["Status"] === TASKS_DONE && !wasDone) {
       modForget_(def, "tasks");
       const row = modRows_(def, "tasks").find(r => r["Task ID"] === id);
@@ -140,6 +151,7 @@ function tasksAfterDone_(def, row, user) {
       copy["Checklist"] = tasksTidyChecklist_(String(row["Checklist"] || "").split("\n").map(l => l.replace(/^\[x\]\s*/i, "")).join("\n"));
       copy["Source Key"] = "";   // the repeat is its own task
       const nid = modInsert_(def, "tasks", copy, user);
+      gtPushId_(def, nid);
       modForget_(def, "tasks");
       const fresh = modRows_(def, "tasks").find(r => r["Task ID"] === row["Task ID"]);
       if (fresh) coreWriteChanges_(modSheet_(def, def.tables.tasks), fresh._row, fresh, { "Next Task ID": nid });
@@ -189,11 +201,13 @@ function tasksLoad_(req, user) {
    const def = tasksDef_();
    if (!coreCan_(user, "tasks", "tasks", "view")) throw coreError_("FORBIDDEN", "You don't have access to Tasks.");
    modPrefetch_(def);
+   if (!req.reload) gtSyncUser_(user.id, user, false, GT_PULL_EVERY.load);   // changes made in Google Tasks come in
+   const users = coreGetUsers_().filter(u => u.active).map(u => ({ id: u.id, name: u.name }));
    return {
       tasks: modRows_(def, "tasks").filter(r => tasksVisible_(user, r)),
       lists: modRows_(def, "lists"),
       schema: modSchema_(def), caps: modCaps_(def, user), seesAll: tasksSeesAll_(user),
-      users: coreGetUsers_().filter(u => u.active).map(u => ({ id: u.id, name: u.name })),
+      users: users, google: gtStatus_(user, tasksSeesAll_(user) ? users : users.filter(u => u.id === user.id)),
       today: vehToday_()
    };
 }
@@ -216,9 +230,12 @@ function tasksComplete_(req, user) {
    if ((row["Status"] === TASKS_DONE) === done) return { already: true };
    const values = tasksBeforeSave_("tasks", { "Status": done ? TASKS_DONE : "To do" }, row, user);
    modChange_(def, "tasks", row, values, user, done ? "Complete" : "Reopen");
+   gtPushId_(def, row["Task ID"]);
    if (done) {
       modForget_(def, "tasks");
       tasksAfterDone_(def, modRows_(def, "tasks").find(r => r["Task ID"] === row["Task ID"]), user);
+   } else if (/^vehicles:/.test(String(row["Source Key"] || "")) && typeof vehFollowUpDone_ === "function") {
+      try { vehFollowUpDone_(String(row["Source Key"]).slice(9), false, user); } catch (e) { console.warn(e); }
    }
    return { done: done };
 }
@@ -234,6 +251,7 @@ function tasksCheck_(req, user) {
    const text = lines[i].replace(/^\[x\]\s*/i, "");
    lines[i] = (req.done ? "[x] " : "") + text;
    modChange_(def, "tasks", row, { "Checklist": lines.join("\n") }, user, req.done ? "Tick step" : "Untick step");
+   gtPushId_(def, row["Task ID"]);
    return { done: !!req.done };
 }
 
@@ -250,7 +268,7 @@ function tasksUpsertAuto_(key, values, user) {
    const def = tasksDef_();
    const row = modRows_(def, "tasks").find(r => r["Source Key"] === key && !r["Next Task ID"]);
    if (!values) {
-      if (row && row["Status"] !== TASKS_DONE) modChange_(def, "tasks", row, { "Deleted": true, "Deleted By": user.id, "Deleted At": new Date() }, user, "Soft delete");
+      if (row && row["Status"] !== TASKS_DONE) { modChange_(def, "tasks", row, { "Deleted": true, "Deleted By": user.id, "Deleted At": new Date() }, user, "Soft delete"); gtPushId_(def, row["Task ID"]); }
       return null;
    }
    const want = {
@@ -264,10 +282,13 @@ function tasksUpsertAuto_(key, values, user) {
          Object.assign(want, tasksBeforeSave_("tasks", { "Status": want["Status"] }, row, user));
       }
       modChange_(def, "tasks", row, want, user);
+      gtPushId_(def, row["Task ID"]);
       return row["Task ID"];
    }
    if (values["Done"]) return null;
-   return modInsert_(def, "tasks", Object.assign(want, { "Priority": "Normal", "Status": "To do", "Send to Google": true, "Source Key": key }), user);
+   const nid = modInsert_(def, "tasks", Object.assign(want, { "Priority": "Normal", "Status": "To do", "Send to Google": gtDefaultSend_(want["Assigned To"]), "Source Key": key }), user);
+   gtPushId_(def, nid);
+   return nid;
 }
 
 // ------------------------------------------------------------
@@ -278,6 +299,7 @@ function tasksHome_(user) {
    if (!coreCan_(user, "tasks", "tasks", "view")) return out;
    const def = tasksDef_();
    modPrefetch_(def);
+   gtSyncUser_(user.id, user, false, GT_PULL_EVERY.home);
    const today = vehToday_(), week = vehAddDays_(today, 7);
    const open = modRows_(def, "tasks").filter(r => r["Status"] !== TASKS_DONE && (r["Assigned To"] === user.id || !r["Assigned To"]));
    const rank = { "High": 0, "Normal": 1, "Low": 2 };

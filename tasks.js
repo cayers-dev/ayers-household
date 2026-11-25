@@ -75,9 +75,11 @@
     defaults: t => {
       if (t !== "tasks") return {};
       const w = who();
-      return { "Assigned To": w === "shared" && seesAll() ? "" : /^USR-/.test(w) ? w : me(), "Status": "To do", "Priority": "Normal" };
+      const person = w === "shared" && seesAll() ? "" : /^USR-/.test(w) ? w : me();
+      const g = (D().google || {}).defaults || {};
+      return { "Assigned To": person, "Status": "To do", "Priority": "Normal", "Send to Google": person ? g[person] !== false : false };
     },
-    hideField: (t, name) => t === "tasks" && (["Send to Google", "Repeat Days"].indexOf(name) !== -1 || (name === "Assigned To" && !seesAll())),
+    hideField: (t, name) => t === "tasks" && (name === "Repeat Days" || (name === "Send to Google" && !(D().google || {}).configured) || (name === "Assigned To" && !seesAll())),
     onFormReady: (t, form, row) => { if (t === "tasks") wireTaskForm(form, row); },
     save: async (action, payload, msg) => {
       C.busy(true);
@@ -213,7 +215,59 @@
     const links = M.tableCan(ctx, "lists", "add", null, { "List": "Category" }) ? section("Settings", '<div class="card list">' +
       [["Category", "Categories"], ["Status", "Statuses"]].map(x => '<a class="list-item" href="#/tasks/list/' + x[0] + '"><span class="thumb">' + IC.tag + '</span><div class="body"><div class="title">' + x[1] + '</div><div class="sub">' +
         esc(listVals(x[0]).map(l => l["Value"]).join(", ")) + '</div></div><span class="thumb">' + ICONS.next + '</span></a>').join("") + '</div>') : "";
-    return { title: "Tasks", back: true, keepScroll: true, html: '<div class="sh-chips" role="tablist" aria-label="Whose tasks">' + chips + '</div>' + add + body + doneHtml + links };
+    return { title: "Tasks", back: true, keepScroll: true, html: googleCard() + '<div class="sh-chips" role="tablist" aria-label="Whose tasks">' + chips + '</div>' + add + body + doneHtml + links };
+  }
+
+  // Google Tasks: set up (admin), connect, last sync, Sync now, settings.
+  function googleCard() {
+    const g = D().google || {};
+    if (!g.configured) return C.isAdmin() ? '<div class="card tk-google"><div class="tk-g-body"><b>Google Tasks sync</b><span>One-time setup: save the sign-in client’s secret.</span></div><button class="btn" data-tk="g-secret">Set up</button></div>' : "";
+    if (!g.connected) return '<div class="card tk-google"><div class="tk-g-body"><b>Google Tasks</b><span>' + esc(g.error || "Put your tasks in your Google Tasks too (My Tasks list).") + '</span></div><button class="btn primary" data-tk="g-connect">Connect</button></div>';
+    const when = g.lastSync ? M.fmtDayTime(String(new Date(g.lastSync).toLocaleString("sv").replace(" ", "T")).slice(0, 16)) : "not yet";
+    return '<div class="card tk-google on"><div class="tk-g-body"><b>Google Tasks connected</b><span>' + esc((g.error ? g.error + " · " : "") + "Last synced " + when) + '</span></div>' +
+      '<button class="btn" data-tk="g-sync">Sync now</button><button class="icon-btn" data-tk="g-settings" aria-label="Google Tasks settings">' + svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>') + '</button></div>';
+  }
+  function gConnect() {
+    const g = D().google || {};
+    const oa = window.google && google.accounts && google.accounts.oauth2;
+    if (!oa) { toast("Google isn't loaded yet. Try again in a moment.", true); return; }
+    const client = oa.initCodeClient({
+      client_id: g.clientId, scope: g.scope, ux_mode: "popup", login_hint: C.state.me.email, select_account: false,
+      callback: async r => {
+        if (!r || !r.code) { toast(r && r.error === "access_denied" ? "Google Tasks wasn't connected." : "Google didn't finish connecting.", true); return; }
+        try {
+          const res = await ctx.save("tasks.gConnect", { code: r.code }, x => "Google Tasks connected" + (x && x.sync && x.sync.pushed ? " · sent " + plural(x.sync.pushed, "task") : ""));
+          return res;
+        } catch (err) { toast(err.message, true); }
+      },
+      error_callback: e => { if (e && e.type !== "popup_closed") toast("Google pop-up was blocked or closed. Try again.", true); }
+    });
+    client.requestCode();
+  }
+  function gSecretForm() {
+    C.openSheet({
+      title: "Set up Google Tasks sync",
+      body: '<p class="confirm-msg">In Google Cloud Console ▸ APIs & Services ▸ Credentials, open the app’s Web client (the one used for sign-in), copy its <b>Client secret</b> and paste it here. It’s saved on the server only and never shown again.</p>' +
+        '<div class="field"><label for="f_gsecret">Client secret</label><input type="password" id="f_gsecret" name="secret" autocomplete="off" required></div>',
+      submitLabel: "Save",
+      onSubmit: async v => !!(await ctx.save("tasks.gSetSecret", { secret: v.secret }, "Google sync is set up. Each person can now connect."))
+    });
+  }
+  function gSettings() {
+    const g = D().google || {};
+    C.openSheet({
+      title: "Google Tasks", noSubmit: true, cancelLabel: "Close",
+      body: '<p class="confirm-msg">Connected as ' + esc(g.email) + '. Your tasks with “Send to Google Tasks” ticked go to your My Tasks list; done, title, notes, checklist and due date go both ways.</p>' +
+        '<div class="field"><label class="check"><input type="checkbox" id="f_gdef"' + (g.defaultSend ? " checked" : "") + '> Send my new tasks to Google Tasks by default</label></div>' +
+        '<div class="danger-zone"><button type="button" class="btn danger" data-g-off>Disconnect</button></div>',
+      onReady: (form, close) => {
+        $("#f_gdef", form).addEventListener("change", e => ctx.save("tasks.gDefault", { on: e.target.checked }, e.target.checked ? "New tasks go to Google by default" : "New tasks stay in the app by default").catch(err => toast(err.message, true)));
+        $("[data-g-off]", form).addEventListener("click", async () => {
+          if (!(await M.confirmSheet({ title: "Disconnect Google Tasks?", message: "Syncing stops and the app's access to your Google Tasks is removed. Tasks already in Google Tasks stay there.", submitLabel: "Disconnect", danger: true }))) return;
+          try { await ctx.save("tasks.gDisconnect", {}, "Google Tasks disconnected"); close(); } catch (err) { toast(err.message, true); }
+        });
+      }
+    });
   }
 
   function viewTask(id) {
@@ -225,7 +279,8 @@
       (statuses.some(s => s["Value"] === r["Status"]) ? "" : '<option>' + esc(r["Status"]) + '</option>') +
       statuses.map(s => '<option' + (s["Value"] === r["Status"] ? " selected" : "") + '>' + esc(s["Value"]) + '</option>').join("") + '</select>' : '<span class="pill">' + esc(r["Status"]) + '</span>';
     const kv = [["Assigned to", r["Assigned To"] ? M.userName(ctx, r["Assigned To"]) : "Household (anyone)"], ["Due", dueText(r)], ["Priority", r["Priority"]], ["Category", r["Category"]],
-      ["Repeats", repeatText(r)], ["Added by", M.userName(ctx, r["Added By"])], ["From", r["Source"]], ["Completed", done && r["Completed At"] ? M.fmtDayTime(r["Completed At"]) + (r["Completed By"] ? " by " + M.userName(ctx, r["Completed By"]) : "") : ""]]
+      ["Repeats", repeatText(r)], ["Google Tasks", r["Google Task ID"] ? "In " + M.userName(ctx, r["Google Owner"]).split(" ")[0] + "'s Google Tasks" : r["Send to Google"] === true && (D().google || {}).configured ? "Waiting to be sent (connect Google Tasks)" : ""],
+      ["Added by", M.userName(ctx, r["Added By"])], ["From", r["Source"]], ["Completed", done && r["Completed At"] ? M.fmtDayTime(r["Completed At"]) + (r["Completed By"] ? " by " + M.userName(ctx, r["Completed By"]) : "") : ""]]
       .filter(x => x[1]);
     const html = '<div class="card hero tk-hero' + (r["Priority"] === "High" ? " high" : "") + '"><h2>' + esc(r["Title"]) + '</h2><div class="meta">' + esc(r["Task ID"]) + '</div>' +
       '<div class="actions">' + statusCtl + (tick ? '<button class="btn ' + (done ? "" : "primary") + '" data-tk="tick" data-id="' + esc(id) + '">' + (done ? "Reopen" : "Complete") + '</button>' : "") +
@@ -287,6 +342,10 @@
       case "add": quickAdd(); break;
       case "more": M.recordForm(ctx, "tasks", "", { title: "Add a task", prefill: Object.assign({ "Title": ($("#tk_add") || {}).value || "" }, ($("#tk_due") || {}).value ? { "Due Date": $("#tk_due").value } : {}) }); break;
       case "retry": tk.error = ""; C.render(); break;
+      case "g-connect": gConnect(); break;
+      case "g-secret": gSecretForm(); break;
+      case "g-settings": gSettings(); break;
+      case "g-sync": ctx.save("tasks.gSync", {}, res => res && res.error ? "Google: " + res.error : "Synced" + (res && (res.pulled || res.pushed) ? " · " + [res.pulled ? res.pulled + " from Google" : "", res.pushed ? res.pushed + " sent" : ""].filter(Boolean).join(", ") : "")).catch(err => toast(err.message, true)); break;
     }
   });
   document.addEventListener("change", async e => {

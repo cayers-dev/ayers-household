@@ -942,7 +942,9 @@ img.thumb[data-file-id] { cursor: pointer; }
 .vh-fu-date input { width: auto; }
 
 /* ---------- Tasks ---------- */
-.tk-add input[type="date"] { width: 140px; flex: none; }
+.tk-add { flex-wrap: wrap; }
+.tk-add #tk_add { flex: 1 1 100%; }
+.tk-add input[type="date"] { flex: 1; min-width: 0; }
 .tk-item.done .body { opacity: .55; }
 .tk-item.done .title { text-decoration: line-through; }
 .tk-item.high .sh-check, .home-task.high .sh-check { border-color: var(--danger); }
@@ -964,3 +966,7 @@ img.thumb[data-file-id] { cursor: pointer; }
 .tk-daybtns { display: flex; gap: 6px; flex-wrap: wrap; }
 .tk-day { width: 40px; height: 36px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); font-weight: 600; cursor: pointer; }
 .tk-day.on { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+.tk-google { display: flex; align-items: center; gap: 10px; padding: 12px; margin-bottom: 10px; }
+.tk-google .tk-g-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.tk-google .tk-g-body span { color: var(--muted); font-size: 14px; }
+.tk-google.on b::before { content: "● "; color: #2f9e44; }
