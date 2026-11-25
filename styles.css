@@ -845,9 +845,12 @@ body.syncing::before { content: ""; position: fixed; top: 0; left: 0; right: 0; 
 .sh-item.checked .body { opacity: .5; }
 .sh-item.checked .title { text-decoration: line-through; }
 .sh-item.checked.urgent .sh-check { border-color: var(--primary); }
-.sh-tools { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: -6px 2px 12px; font-size: 14px; }
+.sh-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin: -6px 2px 12px; font-size: 14px; }
 .sh-tools .link-btn { padding: 0; }
-.sh-grouptoggle { color: var(--muted); padding: 0; }
+.sh-grouptoggle { color: var(--muted); padding: 0; margin-left: auto; }
+.sh-urgentadd { padding: 0; gap: 6px; font-size: 14px; font-weight: 600; }
+.sh-urgentadd input { accent-color: var(--danger); }
+.sh-urgentadd:has(input:checked) { color: var(--danger); }
 .sh-clear { margin: 4px 0 2px; }
 .sh-removing { position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .35); }
 .sh-removing-box { display: flex; align-items: center; gap: 14px; background: var(--surface); color: var(--text); border-radius: var(--radius);

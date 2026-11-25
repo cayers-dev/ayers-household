@@ -1,5 +1,5 @@
 /* Ayers Household - Shopping List screens
- * The list (filter by store, grouped by category or by name, urgent first), quick add, add several
+ * The list (filter by store, grouped by category or by name, urgent first), quick add (with an Urgent box), add several
  * at once, check off (grays out; leaving the list asks to remove checked items), and the
  * Store / Category / Unit dropdown lists.
  * Data comes from shopping.load; adds and edits go through the shared module engine (modules.js).
@@ -9,7 +9,7 @@
   const C = window.HH_CORE, M = window.HH_MOD;
   const { esc, $, toast, ICONS, svg, section, plural } = C;
 
-  const sh = { data: null, loading: false, error: "", asking: false };
+  const sh = { data: null, loading: false, error: "", asking: false, urgent: false };   // urgent: the quick-add Urgent box
   const STORE_KEY = "hh-shop-store", GROUP_KEY = "hh-shop-group";
   const REFRESH_MS = 45000;
 
@@ -119,7 +119,7 @@
   let tmpN = 0;
   async function quickAddSend(values, extra) {
     const tmp = { "Item ID": "tmp-" + (++tmpN), "Item": values["Item"], "Quantity": values["Quantity"] !== undefined ? values["Quantity"] : "",
-      "Store": values["Store"] || "", "Status": "Needed", "Added By": C.state.me.id, _pending: true };
+      "Store": values["Store"] || "", "Urgent": values["Urgent"] === true, "Status": "Needed", "Added By": C.state.me.id, _pending: true };
     D().items.push(tmp);
     redraw();
     let res;
@@ -159,7 +159,9 @@
     const v = { "Item": name };
     if (qtyRaw !== "") v["Quantity"] = Number(qtyRaw);
     if (s) v["Store"] = s;
+    if (sh.urgent) v["Urgent"] = true;
     input.value = ""; if (qtyIn) qtyIn.value = "";
+    sh.urgent = false;    // like the boxes, Urgent resets for the next item
     sh.focusAdd = true;   // ready for the next item
     quickAddSend(v);
   }
@@ -297,7 +299,8 @@
         '<input id="sh_qty" type="number" placeholder="Qty" inputmode="decimal" min="0" step="any" enterkeyhint="done" aria-label="Quantity">' +
         '<button class="btn primary" data-sh="add" aria-label="Add">' + ICONS.plus + '</button>' +
         '<button class="btn" data-sh="more" aria-label="Add with details">More</button></div>' +
-      '<div class="sh-tools"><button class="link-btn" data-sh="several">Add several at once</button>' +
+      '<div class="sh-tools"><label class="check sh-urgentadd"><input type="checkbox" id="sh_urgent" data-sh="urgent"' + (sh.urgent ? " checked" : "") + '> Urgent</label>' +
+        '<button class="link-btn" data-sh="several">Add several at once</button>' +
         '<label class="check sh-grouptoggle"><input type="checkbox" data-sh="group"' + (grouped() ? " checked" : "") + '> Group by category</label></div>'
       : '<div class="sh-tools"><span></span><label class="check sh-grouptoggle"><input type="checkbox" data-sh="group"' + (grouped() ? " checked" : "") + '> Group by category</label></div>';
     const list = groups.length
@@ -355,7 +358,7 @@
       case "add": quickAdd(); break;
       case "more": {
         const q = ($("#sh_qty") || {}).value || "";
-        M.recordForm(ctx, "items", "", { title: "Add an item", prefill: Object.assign({ "Item": ($("#sh_add") || {}).value || "" }, q !== "" ? { "Quantity": q } : {}) });
+        M.recordForm(ctx, "items", "", { title: "Add an item", prefill: Object.assign({ "Item": ($("#sh_add") || {}).value || "" }, q !== "" ? { "Quantity": q } : {}, sh.urgent ? { "Urgent": true } : {}) });
         break;
       }
       case "store": setStoreFilter(d.store || ""); C.render(); break;
@@ -367,6 +370,7 @@
   });
   document.addEventListener("change", e => {
     if (e.target && e.target.matches("[data-sh='group']")) { setGrouped(e.target.checked); C.render(); }
+    if (e.target && e.target.matches("[data-sh='urgent']")) sh.urgent = e.target.checked;
   });
   // Leaving the Shopping List (Home, back, another module) with checked items: ask to remove them.
   let lastRoute = C.parseRoute().name;
