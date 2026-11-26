@@ -70,7 +70,8 @@ function financialDef_() {
                { name: "Autopay", type: "bool", hint: "Marks itself paid on the due date" },
                { name: "Paid By", type: "list", list: "Person", default: "Chris" },
                { name: "Account ID", label: "Paid From", type: "ref", ref: "accounts" },
-               { name: "Loan ID", label: "Loan", type: "ref", ref: "loans", hint: "Payments lower this loan's balance" },
+               { name: "Card ID", label: "Card", type: "ref", ref: "cards", hint: "Optional: which card on that account" },
+               { name: "Loan ID", label: "Loan", type: "ref", ref: "loans", readOnly: true, hint: "Set by the loan: this is its payment bill" },
                { name: "Plan ID", label: "Saving Toward", type: "ref", ref: "plans", hint: "Payments add to this goal's saved amount" },
                { name: "Reminder", label: "Reminder task", type: "bool", hint: "A task for each payment (Tasks)" },
                { name: "Reminder To", type: "users", default: "USR-1", hint: "Each person gets a task; ticking any one marks the bill paid" },
@@ -106,14 +107,22 @@ function financialDef_() {
             title: r => r["Name"],
             fields: [
                { name: "Name", type: "text", required: true, hint: "e.g. Nissan (Rogue)" },
-               { name: "Lender", type: "text" },
-               { name: "Starting Balance", type: "money", required: true },
-               { name: "Balance Date", label: "Balance as of", type: "date", required: true },
-               { name: "Interest Rate", label: "Interest rate (APR %)", type: "percent", hint: "Optional: used for the payoff estimate" },
+               { name: "Institution ID", label: "Lender", type: "ref", ref: "institutions" },
+               { name: "Original Amount", type: "money", hint: "Amount borrowed" },
+               { name: "Start Date", label: "Loan Start Date", type: "date" },
+               { name: "Term Months", label: "Term (months)", type: "number", hint: "e.g. 72" },
+               { name: "Interest Rate", label: "Interest rate (APR %)", type: "percent", hint: "Splits each payment into interest and principal" },
+               { name: "Payment", type: "money", hint: "Blank = worked out from the amount, APR and term" },
+               { name: "Payment Frequency", type: "choice", options: ["Monthly", "Every 2 weeks", "Weekly"], required: true, default: "Monthly" },
+               { name: "First Payment Date", type: "date", hint: "With a payment amount, this makes the loan's payment bill" },
+               { name: "Autopay", type: "bool" },
+               { name: "Account ID", label: "Paid From", type: "ref", ref: "accounts" },
+               { name: "Starting Balance", label: "Current Balance", type: "money", hint: "For a loan already under way (blank = the original amount)" },
+               { name: "Balance Date", label: "Current Balance as of", type: "date" },
                { name: "Vehicle ID", label: "Vehicle", type: "text", hint: "Shows the loan on that vehicle (for people who can see Loans)" },
-               { name: "Account ID", label: "Account", type: "ref", ref: "accounts" },
                { name: "Paid Off Date", type: "date" },
                { name: "Remaining", label: "Remaining balance", type: "money", readOnly: true },
+               { name: "Bill ID", label: "Payment bill", type: "text", readOnly: true },
                { name: "Notes", type: "longtext" }
             ] },
          loanpays: { tab: "Loan Payments", label: "Loan Payments", id: "Loan Payment ID", prefix: "LNP-", kind: "record", area: "loans",
@@ -125,19 +134,41 @@ function financialDef_() {
                { name: "Amount", type: "money", required: true, hint: "Lowers the balance. For an adjustment, a negative amount raises it (fees, interest)." },
                { name: "Notes", type: "text" }
             ] },
+         institutions: { tab: "Institutions", label: "Institutions", id: "Institution ID", prefix: "INS-", kind: "list", area: "accounts",
+            unique: ["Name"], title: r => r["Name"],
+            fields: [
+               { name: "Name", type: "text", required: true, hint: "e.g. Capital One" },
+               { name: "Type", type: "choice", options: ["Bank", "Credit Union", "Card Issuer", "Lender", "Investment", "Other"], required: true, default: "Bank" },
+               { name: "Website", type: "url" },
+               { name: "Phone", type: "text" },
+               { name: "Notes", type: "longtext", hint: "No logins or passwords" }
+            ] },
          accounts: { tab: "Accounts", label: "Accounts", id: "Account ID", prefix: "ACC-", kind: "list", area: "accounts",
             unique: ["Nickname"], title: r => r["Nickname"],
             fields: [
-               { name: "Nickname", type: "text", required: true, hint: "e.g. Capital One (Chris)" },
-               { name: "Institution", type: "text" },
+               { name: "Nickname", type: "text", required: true, hint: "e.g. Capital One Quicksilver" },
+               { name: "Institution ID", label: "Institution", type: "ref", ref: "institutions", required: true },
                { name: "Kind", type: "choice", options: ["Checking", "Savings", "Credit Card", "Loan", "Retirement", "Other"], required: true, default: "Checking" },
-               { name: "Owner", type: "list", list: "Person" },
-               { name: "Card Last 4", label: "Card – last 4 digits", type: "text" },
+               { name: "Owners", type: "users" },
                { name: "Account Last 4", label: "Account – last 4 digits", type: "text" },
-               { name: "Website", type: "url" },
+               { name: "Credit Limit", type: "money", hint: "Credit cards" },
+               { name: "Statement Day", type: "number", hint: "Day of the month the statement closes" },
+               { name: "Payment Due Day", type: "number", hint: "Day of the month payment is due" },
+               { name: "APR", label: "APR %", type: "percent" },
                { name: "Balance", type: "money", hint: "Optional, typed in by hand" },
                { name: "Balance Date", label: "Balance as of", type: "date" },
                { name: "Notes", type: "longtext", hint: "No full account numbers or passwords" }
+            ] },
+         cards: { tab: "Cards", label: "Cards", id: "Card ID", prefix: "CRD-", kind: "list", area: "accounts",
+            unique: ["Account ID", "Last 4", "Cardholder"], title: r => (r["Network"] ? r["Network"] + " " : "") + "••" + r["Last 4"],
+            fields: [
+               { name: "Account ID", label: "Account", type: "ref", ref: "accounts", required: true },
+               { name: "Cardholder", type: "user", required: true },
+               { name: "Last 4", label: "Card – last 4 digits", type: "text", required: true },
+               { name: "Network", type: "choice", options: ["Visa", "Mastercard", "Amex", "Discover", "Other"] },
+               { name: "Card Type", type: "choice", options: ["Credit", "Debit"], required: true, default: "Credit" },
+               { name: "Status", type: "choice", options: ["Active", "Closed"], required: true, default: "Active" },
+               { name: "Notes", type: "text" }
             ] },
          plans: { tab: "Plans", label: "Plan / Save For", id: "Plan ID", prefix: "PLN-", kind: "record", area: "plans", addNew: true,
             title: r => r["Goal"],
@@ -147,7 +178,13 @@ function financialDef_() {
                { name: "Target Date", type: "date" },
                { name: "Starting Saved", label: "Saved before tracking", type: "money" },
                { name: "Monthly Contribution", type: "money" },
+               { name: "Transfer On", label: "Automatic transfer", type: "bool", hint: "Adds to Saved to date by itself on each transfer date" },
+               { name: "Transfer Amount", type: "money" },
+               { name: "Transfer Frequency", type: "choice", options: FIN_FREQ.filter(f => ["One-time", "Twice a month", "Every N months"].indexOf(f) === -1), default: "Monthly" },
+               { name: "First Transfer Date", type: "date" },
+               { name: "Transfer Account ID", label: "Transfer From", type: "ref", ref: "accounts" },
                { name: "Status", type: "choice", options: ["Active", "Reached", "Cancelled"], required: true, default: "Active" },
+               { name: "Bill ID", label: "Transfer bill", type: "text", readOnly: true },
                { name: "Notes", type: "longtext" }
             ] },
          options: { tab: "Plan Options", label: "Plan Options", id: "Option ID", prefix: "OPT-", kind: "record", area: "plans", hardDelete: true,
@@ -499,10 +536,24 @@ function finBeforeSave_(tableKey, values, before, user, req) {
       }
       if (!before && !("Scheduled For" in values)) values["Scheduled For"] = values["Due Date"];
    }
-   if (tableKey === "accounts") {
-      ["Card Last 4", "Account Last 4"].forEach(n => {
-         if (n in values && values[n] !== "" && !/^\d{4}$/.test(String(values[n]))) throw coreError_("INVALID", "Only the last 4 digits can be saved (no full card or account numbers).");
-      });
+   const last4 = n => { if (n in values && values[n] !== "" && !/^\d{4}$/.test(String(values[n]))) throw coreError_("INVALID", "Only the last 4 digits can be saved (no full card or account numbers)."); };
+   const dayOfMonth = n => { if (n in values && values[n] !== "") { const d = Number(values[n]); if (!(d >= 1 && d <= 31 && d === Math.round(d))) throw coreError_("INVALID", n + " must be a day of the month (1–31)."); } };
+   if (tableKey === "accounts") { last4("Account Last 4"); dayOfMonth("Statement Day"); dayOfMonth("Payment Due Day"); }
+   if (tableKey === "cards") last4("Last 4");
+   if (tableKey === "bills" && merged["Card ID"]) {
+      const card = vehFind_(def, "cards", merged["Card ID"]);
+      if (card && merged["Account ID"] && card["Account ID"] !== merged["Account ID"]) throw coreError_("INVALID", "That card isn't on the Paid From account.");
+      if (card && !merged["Account ID"]) values["Account ID"] = card["Account ID"];
+   }
+   if (tableKey === "loans") {
+      const has = n => merged[n] !== "" && merged[n] !== undefined && merged[n] !== null;
+      if (!has("Original Amount") && !has("Starting Balance")) throw coreError_("INVALID", "Enter the original amount, or the current balance for a loan already under way.");
+      if (has("Starting Balance") && !has("Balance Date")) throw coreError_("INVALID", "Enter the date of the current balance.");
+      if (has("Term Months")) { const n = Number(merged["Term Months"]); if (!(n >= 1 && n <= 600 && n === Math.round(n))) throw coreError_("INVALID", "Term must be a whole number of months."); }
+      if (!has("Payment")) { const p = finLoanPayment_(merged); if (p) values["Payment"] = p; }
+   }
+   if (tableKey === "plans" && merged["Transfer On"] === true) {
+      if (!(finRound_(merged["Transfer Amount"]) > 0) || !merged["First Transfer Date"] || !merged["Transfer Frequency"]) throw coreError_("INVALID", "For an automatic transfer, enter the amount, how often and the first transfer date.");
    }
    if (tableKey === "loans" && "Vehicle ID" in values && values["Vehicle ID"] !== "" && !/^VEH-\d+$/.test(String(values["Vehicle ID"]))) {
       throw coreError_("INVALID", "Pick the vehicle from the list.");
@@ -527,6 +578,8 @@ function finAfterSave_(tableKey, id, values, before, user, req) {
       const e = modRows_(def, "entries").find(x => x["Entry ID"] === id);
       if (e) finReminder_(def, e, vehFind_(def, "bills", e["Bill ID"]), user);
    }
+   if (tableKey === "loans") finLoanBill_(def, id, user);
+   if (tableKey === "plans") finPlanBill_(def, id, user);
 }
 
 function finAfterDelete_(tableKey, row, user) {
@@ -534,6 +587,10 @@ function finAfterDelete_(tableKey, row, user) {
    if (tableKey === "bills" || tableKey === "income") finClearUpcoming_(def, tableKey, row[FIN_KINDS[tableKey].id], user, true);
    if (tableKey === "entries" && row["Reminder Task"] && finTasksOn_()) {
       try { finRemoveReminders_(row["Entry ID"], user); } catch (e) { console.warn(e); }
+   }
+   if ((tableKey === "loans" || tableKey === "plans") && row["Bill ID"]) {
+      const bill = modRows_(def, "bills").find(b => b["Bill ID"] === row["Bill ID"]);
+      if (bill) finRetireBill_(def, bill, user);
    }
    if (tableKey === "options") {
       modRows_(def, "optlines").filter(l => l["Option ID"] === row["Option ID"]).sort((a, b) => b._row - a._row)
@@ -544,21 +601,116 @@ function finAfterDelete_(tableKey, row, user) {
 // ------------------------------------------------------------
 // Loans, plans
 // ------------------------------------------------------------
+// Payments a year for a loan's payment frequency.
+const finPpy_ = f => ({ "Every 2 weeks": 26, "Weekly": 52 }[f] || 12);
+// Payment worked out from amount, APR and term (standard loan payment); "" when it can't be.
+function finLoanPayment_(l) {
+   const amt = Number(l["Original Amount"] !== "" && l["Original Amount"] !== undefined ? l["Original Amount"] : l["Starting Balance"]) || 0;
+   const months = Number(l["Term Months"]) || 0;
+   if (!(amt > 0) || !(months > 0)) return "";
+   const ppy = finPpy_(l["Payment Frequency"]), n = Math.round(months * ppy / 12), r = (Number(l["Interest Rate"]) || 0) / 100 / ppy;
+   return finRound_(r > 0 ? amt * r / (1 - Math.pow(1 + r, -n)) : amt / n);
+}
+// The date of the nth payment from the first one (for the payment bill's last due date).
+function finNthDate_(first, freq, n) {
+   let k = 0, out = "";
+   finEach_({ "Start Date": first, "Frequency": freq }, d => { k++; if (k >= n) { out = d; return false; } });
+   return out;
+}
+// Soft-deletes a bill made by a loan or goal (its unpaid entries and reminders come off; paid ones stay).
+function finRetireBill_(def, bill, user) {
+   modChange_(def, "bills", bill, { "Deleted": true, "Deleted By": user.id, "Deleted At": new Date() }, user, "Soft delete");
+   finClearUpcoming_(def, "bills", bill["Bill ID"], user, true);
+}
+// Adds or changes a bill made for a loan or a goal, then makes its schedule.
+function finUpsertOwnedBill_(def, ownerTable, owner, values, user) {
+   const bill = owner["Bill ID"] ? modRows_(def, "bills").find(b => b["Bill ID"] === owner["Bill ID"]) : null;
+   if (!bill) {
+      const groups = modListValues_(def, "Group").map(v => v.value), cats = modListValues_(def, "Category").map(v => v.value);
+      values["Group"] = groups.indexOf(values["Group"]) !== -1 ? values["Group"] : (groups[0] || "Expenses");
+      if (cats.indexOf(values["Category"]) === -1) values["Category"] = "";
+      values["Paid By"] = "Chris"; values["Reminder"] = false; values["Reminder To"] = "USR-1"; values["Reminder Days"] = 3;
+      const id = modInsert_(def, "bills", values, user);
+      coreWriteChanges_(modSheet_(def, def.tables[ownerTable]), owner._row, owner, { "Bill ID": id });
+      modForget_(def, ownerTable);
+      finAfterSave_("bills", id, values, null, user, {});
+      return id;
+   }
+   const req = { updateFuture: true };
+   const v = finBeforeSave_("bills", Object.assign({}, values), bill, user, req);
+   modChange_(def, "bills", bill, v, user, "Kept in step with " + owner[def.tables[ownerTable].id]);
+   finAfterSave_("bills", bill["Bill ID"], v, bill, user, req);
+   return bill["Bill ID"];
+}
+// A loan with a payment and first payment date has its own payment bill (Expenses › Loan).
+function finLoanBill_(def, loanId, user) {
+   modForget_(def, "loans");
+   const loan = modRows_(def, "loans").find(l => l["Loan ID"] === loanId);
+   if (!loan) return;
+   const pay = finRound_(loan["Payment"]), first = finIso_(loan["First Payment Date"]);
+   if (!(pay > 0) || !first) {
+      const old = loan["Bill ID"] ? modRows_(def, "bills").find(b => b["Bill ID"] === loan["Bill ID"]) : null;
+      if (old) finRetireBill_(def, old, user);
+      if (loan["Bill ID"]) coreWriteChanges_(modSheet_(def, def.tables.loans), loan._row, loan, { "Bill ID": "" });
+      return;
+   }
+   const freq = loan["Payment Frequency"] || "Monthly";
+   let end = "";
+   if (Number(loan["Term Months"]) > 0) end = finNthDate_(first, freq, Math.round(Number(loan["Term Months"]) * finPpy_(freq) / 12));
+   const off = finIso_(loan["Paid Off Date"]);
+   if (off && (!end || off < end)) end = off < first ? first : off;
+   finUpsertOwnedBill_(def, "loans", loan, {
+      "Name": loan["Name"] + " payment", "Group": "Expenses", "Category": "Loan", "Amount": pay, "Frequency": freq,
+      "Start Date": coreDate_(first), "End Date": end ? coreDate_(end) : "", "Autopay": loan["Autopay"] === true,
+      "Account ID": loan["Account ID"] || "", "Loan ID": loanId
+   }, user);
+}
+// A goal with an automatic transfer has its own savings bill (on autopay), so each transfer adds to Saved to date.
+function finPlanBill_(def, planId, user) {
+   modForget_(def, "plans");
+   const p = modRows_(def, "plans").find(x => x["Plan ID"] === planId);
+   if (!p) return;
+   const on = p["Transfer On"] === true && p["Status"] === "Active" && finRound_(p["Transfer Amount"]) > 0 && finIso_(p["First Transfer Date"]);
+   if (!on) {
+      const old = p["Bill ID"] ? modRows_(def, "bills").find(b => b["Bill ID"] === p["Bill ID"]) : null;
+      if (old) finRetireBill_(def, old, user);
+      if (p["Bill ID"]) coreWriteChanges_(modSheet_(def, def.tables.plans), p._row, p, { "Bill ID": "" });
+      return;
+   }
+   finUpsertOwnedBill_(def, "plans", p, {
+      "Name": p["Goal"] + " (automatic transfer)", "Group": "Savings", "Category": "Savings", "Amount": finRound_(p["Transfer Amount"]),
+      "Frequency": p["Transfer Frequency"] || "Monthly", "Start Date": coreDate_(finIso_(p["First Transfer Date"])), "End Date": "",
+      "Autopay": true, "Account ID": p["Transfer Account ID"] || "", "Plan ID": planId
+   }, user);
+}
+
 function finLoanStatus_(loan, bills, entries, pays, today) {
-   const lid = loan["Loan ID"], from = finIso_(loan["Balance Date"]) || "0000-00-00";
+   const lid = loan["Loan ID"];
+   // A loan already under way counts from its current balance; otherwise from the original amount.
+   const cur = loan["Starting Balance"] !== "" && loan["Starting Balance"] !== undefined && loan["Starting Balance"] !== null;
+   const start = finRound_(cur ? loan["Starting Balance"] : loan["Original Amount"]);
+   const from = finIso_(cur ? loan["Balance Date"] : (loan["Start Date"] || loan["First Payment Date"])) || "0000-00-00";
    const linked = bills.filter(b => b["Loan ID"] === lid && !b["Deleted"]);
    const ids = {}; bills.filter(b => b["Loan ID"] === lid).forEach(b => ids[b["Bill ID"]] = true);
    const paid = entries.filter(e => ids[e["Bill ID"]] && e["Status"] === "Paid" && (finIso_(e["Paid Date"]) || finIso_(e["Due Date"])) >= from);
    const extra = pays.filter(p => p["Loan ID"] === lid && finIso_(p["Date"]) >= from);
-   const start = finRound_(loan["Starting Balance"]);
-   const done = finRound_(paid.reduce((s, e) => s + (Number(e["Amount"]) || 0), 0) + extra.reduce((s, p) => s + (Number(p["Amount"]) || 0), 0));
-   const remaining = finRound_(start - done);
+   // With an APR, each regular payment pays the period's interest first; extra payments are all principal.
+   const rate = Number(loan["Interest Rate"]) || 0, ppy = finPpy_(loan["Payment Frequency"]);
+   const events = paid.map(e => ({ d: finIso_(e["Paid Date"]) || finIso_(e["Due Date"]), a: Number(e["Amount"]) || 0, reg: true }))
+      .concat(extra.map(p => ({ d: finIso_(p["Date"]), a: Number(p["Amount"]) || 0, reg: false })))
+      .sort((a, b) => a.d.localeCompare(b.d) || (b.reg - a.reg));
+   let bal = start, interest = 0;
+   events.forEach(ev => {
+      if (ev.reg && rate > 0 && bal > 0) { const i = finRound_(bal * rate / 100 / ppy); interest += i; bal = finRound_(bal - (ev.a - i)); }
+      else bal = finRound_(bal - ev.a);
+   });
+   const remaining = finRound_(bal), done = finRound_(start - bal);
    const monthly = finRound_(linked.filter(b => !b["End Date"] || finIso_(b["End Date"]) >= today).reduce((s, b) => s + (Number(b["Amount"]) || 0) * finPerMonth_(b), 0));
-   const o = { id: lid, start: start, paid: done, remaining: Math.max(0, remaining), progress: start > 0 ? Math.min(1, Math.max(0, done / start)) : 0,
+   const o = { id: lid, start: start, paid: done, interest: finRound_(interest), original: finRound_(loan["Original Amount"]), from: from,
+               remaining: Math.max(0, remaining), progress: start > 0 ? Math.min(1, Math.max(0, done / start)) : 0,
                monthly: monthly, months: null, payoff: "", basis: "", bills: linked.map(b => b["Bill ID"]) };
    if (remaining <= 0 || loan["Paid Off Date"]) { o.basis = "done"; o.remaining = Math.max(0, remaining); o.progress = 1; return o; }
    if (monthly <= 0) { o.basis = "none"; return o; }
-   const rate = Number(loan["Interest Rate"]) || 0;
    if (rate > 0) {
       let bal = remaining, n = 0;
       const r = rate / 1200;
@@ -691,13 +843,18 @@ function finLoad_(req, user) {
       schema: modSchema_(def), caps: modCaps_(def, user), today: today, days: finDays_(user),
       users: coreGetUsers_().map(u => ({ id: u.id, name: u.name })),
       lists: modRows_(def, "lists"),
-      bills: [], entries: [], income: [], deposits: [], accounts: [], loans: [], loanpays: [], loanStatus: {},
+      bills: [], entries: [], income: [], deposits: [], accounts: [], institutions: [], cards: [], loans: [], loanpays: [], loanStatus: {},
       plans: [], options: [], optlines: [], planStatus: {}, report: null, vehicles: [], hockey: null
    };
    if (see("bills")) { out.bills = modRows_(def, "bills"); out.entries = modRows_(def, "entries"); }
    if (see("income")) { out.income = modRows_(def, "income"); out.deposits = modRows_(def, "deposits"); }
-   if (see("accounts")) out.accounts = modRows_(def, "accounts");
-   else if (see("bills") || see("income") || see("loans")) out.accounts = modRows_(def, "accounts").map(a => ({ "Account ID": a["Account ID"], "Nickname": a["Nickname"], "Kind": a["Kind"], "Active": a["Active"] }));
+   if (see("accounts")) { out.accounts = modRows_(def, "accounts"); out.institutions = modRows_(def, "institutions"); out.cards = modRows_(def, "cards"); }
+   else if (see("bills") || see("income") || see("loans") || see("plans")) {
+      // Names only, for the Paid From / Card / Lender dropdowns.
+      out.accounts = modRows_(def, "accounts").map(a => ({ "Account ID": a["Account ID"], "Nickname": a["Nickname"], "Kind": a["Kind"], "Institution ID": a["Institution ID"], "Active": a["Active"] }));
+      out.institutions = modRows_(def, "institutions").map(i => ({ "Institution ID": i["Institution ID"], "Name": i["Name"], "Type": i["Type"], "Active": i["Active"] }));
+      out.cards = modRows_(def, "cards").map(c => ({ "Card ID": c["Card ID"], "Account ID": c["Account ID"], "Last 4": c["Last 4"], "Network": c["Network"], "Cardholder": c["Cardholder"], "Status": c["Status"], "Active": c["Active"] }));
+   }
    if (see("loans")) { out.loans = modRows_(def, "loans"); out.loanpays = modRows_(def, "loanpays"); out.loanStatus = finLoanAll_(def, today); }
    if (see("plans")) { out.plans = modRows_(def, "plans"); out.options = modRows_(def, "options"); out.optlines = modRows_(def, "optlines"); out.planStatus = finPlanStatus_(def, today); }
    if (see("reports")) { try { out.report = finReport_(def, req.year); } catch (e) { console.warn("Financial report: " + e); } }
@@ -885,6 +1042,48 @@ function finFile_(req, user) {
 // Tasks categories, and makes Brittany an Editor on Financial if she has no Financial role yet.
 // No bills, income or history are copied in (that's a separate import, later).
 // ------------------------------------------------------------
+// Update of 11/25 (safe to run again): accounts move under institutions (made from their old
+// Institution text), their card's last 4 becomes a card, Owner becomes Owners, and a loan's Lender
+// text becomes an institution.
+function financialUpgrade_(def, owner) {
+   const users = coreGetUsers_(true);
+   const person = name => { const n = String(name || "").trim().toLowerCase(); if (!n) return []; if (n === "joint") return ["USR-1", "USR-2"];
+      const u = users.find(x => x.name.split(" ")[0].toLowerCase() === n || x.name.toLowerCase() === n); return u ? [u.id] : []; };
+   let made = 0, moved = 0, cards = 0, lenders = 0;
+   const inst = (name, type, website) => {
+      name = String(name || "").replace(/\s+/g, " ").trim();
+      if (!name) return "";
+      const have = modRows_(def, "institutions", true).find(i => String(i["Name"]).toLowerCase() === name.toLowerCase());
+      if (have) { if (website && !have["Website"]) coreWriteChanges_(modSheet_(def, def.tables.institutions), have._row, have, { "Website": website }); return have["Institution ID"]; }
+      made++;
+      return modInsert_(def, "institutions", { "Name": name, "Type": type, "Website": website || "" }, owner);
+   };
+   modRows_(def, "accounts", true).filter(a => !a["Institution ID"]).forEach(a => {
+      const iid = inst(a["Institution"] || a["Nickname"], a["Kind"] === "Credit Card" ? "Card Issuer" : "Bank", a["Website"]);
+      const ch = { "Institution ID": iid };
+      const who = person(a["Owner"]);
+      if (!a["Owners"] && who.length) ch["Owners"] = who.join(",");
+      modForget_(def, "accounts");
+      const row = modRows_(def, "accounts", true).find(x => x["Account ID"] === a["Account ID"]);
+      coreWriteChanges_(modSheet_(def, def.tables.accounts), row._row, row, ch);
+      moved++;
+      if (/^\d{4}$/.test(String(a["Card Last 4"] || "")) && !modRows_(def, "cards", true).some(c => c["Account ID"] === a["Account ID"] && c["Last 4"] === String(a["Card Last 4"]))) {
+         modInsert_(def, "cards", { "Account ID": a["Account ID"], "Cardholder": who[0] || "USR-1", "Last 4": String(a["Card Last 4"]), "Card Type": a["Kind"] === "Credit Card" ? "Credit" : "Debit", "Status": "Active" }, owner);
+         cards++;
+      }
+   });
+   modForget_(def, "accounts");
+   modRows_(def, "loans", true).filter(l => !l["Institution ID"] && String(l["Lender"] || "").trim()).forEach(l => {
+      const iid = inst(l["Lender"], "Lender", "");
+      modForget_(def, "loans");
+      const row = modRows_(def, "loans", true).find(x => x["Loan ID"] === l["Loan ID"]);
+      coreWriteChanges_(modSheet_(def, def.tables.loans), row._row, row, { "Institution ID": iid });
+      lenders++;
+   });
+   modForget_(def, "loans");
+   return "Upgrade: institutions made " + made + ", accounts moved " + moved + ", cards made " + cards + ", lenders linked " + lenders;
+}
+
 const FIN_SEED = {
    "Group": [["Expenses", 1], ["Non-Essential", 2], ["Savings", 3]],
    "Category": ["Utilities", "Phone", "TV & Internet", "Insurance", "Loan", "Credit Card", "School", "Subscriptions", "Food", "Household", "Gasoline", "Car Wash", "Savings", "Other"],
@@ -910,6 +1109,7 @@ function financialSetup() {
    }));
    if (lists.length) modBulkInsert_(def, "lists", lists, owner);
    out.push("List values added: " + lists.length);
+   out.push(financialUpgrade_(def, owner));
    // Areas: Reports, and the Bills area's name.
    const areas = coreSheet_(CORE_CONFIG.tabs.areas), am = coreHeaderMap_(areas).map;
    const arows = coreTable_(CORE_CONFIG.tabs.areas).rows;

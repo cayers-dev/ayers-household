@@ -10,7 +10,7 @@
   const C = window.HH_CORE, M = window.HH_MOD;
   const { esc, $, $$, toast, ICONS, svg, section, plural } = C;
 
-  const fin = { data: null, loading: false, error: "", days: null, allHistory: {}, report: null, reportYear: null, reportLoading: false, openRows: {} };
+  const fin = { data: null, loading: false, error: "", days: null, allHistory: {}, report: null, reportYear: null, reportLoading: false, openRows: {}, method: {} };
   const IC = {
     bill: svg('<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>'),
     income: svg('<path d="M12 4v12M7 11l5 5 5-5"/><path d="M5 20h14"/>'),
@@ -79,6 +79,16 @@
     if (s.basis === "never") return "The payment doesn't cover the interest";
     return "Paid off about " + monthName(s.payoff) + (s.basis === "rate" ? " (at " + loan["Interest Rate"] + "% APR)" : "");
   }
+  // "Visa ••1234 · Chris"
+  const cardLabel = c => [(c["Network"] ? c["Network"] + " " : "") + "••" + c["Last 4"], c["Cardholder"] ? M.userName(ctx, c["Cardholder"]) : ""].filter(Boolean).join(" · ");
+  const instName = id => { const i = byId("institutions", id); return i ? i["Name"] : ""; };
+  const OWNED_FIELDS = ["Name", "Amount", "Frequency", "Every N Months", "Start Date", "Second Day", "End Date", "Autopay", "Account ID", "Card ID", "Loan ID", "Plan ID"];
+  // Which loan or goal a bill belongs to (its payment / automatic transfer), as a sentence.
+  function ownedBy(b) {
+    if (b["Loan ID"]) { const l = byId("loans", b["Loan ID"]); return "This is the payment bill for " + (l ? l["Loan ID"] + " " + l["Name"] : b["Loan ID"]) + ". Change its amount and dates on the loan."; }
+    const p = rows("plans").find(x => x["Bill ID"] === b["Bill ID"]);
+    return p ? "This is the automatic transfer for " + p["Plan ID"] + " " + p["Goal"] + ". Change it on the goal." : "";
+  }
   const bar = p => '<div class="fin-bar"><span style="width:' + Math.round(Math.max(0, Math.min(1, p || 0)) * 100) + '%"></span></div>';
 
   async function load(silent) {
@@ -101,6 +111,8 @@
       switch (t) {
         case "bills": case "income": case "loans": case "vehicles": return r["Name"];
         case "accounts": return r["Nickname"] + (r["Kind"] ? " · " + r["Kind"] : "");
+        case "institutions": return r["Name"];
+        case "cards": return cardLabel(r);
         case "plans": return r["Goal"];
         case "options": return r["Option"];
         case "lists": return r["Value"];
@@ -113,10 +125,57 @@
       return ctx.refLabel(t, r);
     },
     singular: t => ({ bills: "bill", income: "income source", entries: "bill entry", deposits: "income entry", loans: "loan", loanpays: "loan payment",
-      accounts: "account", plans: "goal", options: "option", lists: "list value" }[t] || "entry"),
+      accounts: "account", institutions: "institution", cards: "card", plans: "goal", options: "option", lists: "list value" }[t] || "entry"),
     formOpts: t => ({ entries: { hide: ["Bill ID"] }, deposits: { hide: ["Income ID"] }, loanpays: { hide: ["Loan ID"] } }[t] || {}),
-    onFormReady: (t, form) => {
+    // A bill made by a loan or a goal: its amount and schedule come from there.
+    hideField: (t, name, values, row) => t === "bills" && row && ownedBy(row) && OWNED_FIELDS.indexOf(name) !== -1,
+    onFormReady: (t, form, row) => {
       const fieldOf = n => { const el = form.querySelector('[name="' + n + '"]'); return el && el.closest(".field"); };
+      if (t === "bills") {
+        // Card: only the cards on the Paid From account.
+        const acct = form.querySelector('select[name="Account ID"]'), card = form.querySelector('select[name="Card ID"]');
+        if (acct && card) {
+          const all = Array.from(card.options).map(o => ({ v: o.value, t: o.textContent }));
+          const fill = () => {
+            const keep = card.value;
+            card.innerHTML = all.filter(o => !o.v || o.v === "__new__" || !acct.value || (byId("cards", o.v) || {})["Account ID"] === acct.value)
+              .map(o => '<option value="' + esc(o.v) + '">' + esc(o.t) + '</option>').join("");
+            if (Array.from(card.options).some(o => o.value === keep)) card.value = keep;
+          };
+          acct.addEventListener("change", fill); fill();
+        }
+        if (row && ownedBy(row)) form.querySelector(".sheet-body").insertAdjacentHTML("afterbegin", '<p class="hint fin-owned">' + esc(ownedBy(row)) + '</p>');
+      }
+      if (t === "accounts") {
+        const sync = () => {
+          const k = (form.querySelector('[name="Kind"]') || {}).value;
+          ["Credit Limit"].forEach(n => { const x = fieldOf(n); if (x) x.hidden = k !== "Credit Card"; });
+          ["Statement Day", "Payment Due Day", "APR"].forEach(n => { const x = fieldOf(n); if (x) x.hidden = !(k === "Credit Card" || k === "Loan"); });
+        };
+        form.addEventListener("change", sync); sync();
+      }
+      if (t === "plans") {
+        const sync = () => {
+          const on = (form.querySelector('[name="Transfer On"]') || {}).checked;
+          ["Transfer Amount", "Transfer Frequency", "First Transfer Date", "Transfer Account ID"].forEach(n => { const x = fieldOf(n); if (x) x.hidden = !on; });
+        };
+        form.addEventListener("change", sync); sync();
+      }
+      if (t === "loans") {
+        // Payment: worked out from amount, APR and term until you type your own.
+        const pay = form.querySelector('[name="Payment"]');
+        let auto = pay && !pay.value;
+        const calc = () => {
+          const v = n => (form.querySelector('[name="' + n + '"]') || {}).value;
+          const amt = Number(v("Original Amount") || v("Starting Balance")) || 0, months = Number(v("Term Months")) || 0;
+          const ppy = { "Every 2 weeks": 26, "Weekly": 52 }[v("Payment Frequency")] || 12, n = Math.round(months * ppy / 12), r = (Number(v("Interest Rate")) || 0) / 100 / ppy;
+          return amt > 0 && n > 0 ? Math.round((r > 0 ? amt * r / (1 - Math.pow(1 + r, -n)) : amt / n) * 100) / 100 : "";
+        };
+        if (pay) {
+          pay.addEventListener("input", () => { auto = !pay.value; });
+          form.addEventListener("input", e => { if (auto && e.target !== pay) { const c = calc(); pay.value = c === "" ? "" : c.toFixed(2); } });
+        }
+      }
       if (t === "bills" || t === "income") {
         const sync = () => {
           const f = (form.querySelector('[name="Frequency"]') || {}).value;
@@ -314,14 +373,19 @@
     const acct = it["Account ID"] ? byId("accounts", it["Account ID"]) : null;
     const loan = it["Loan ID"] ? byId("loans", it["Loan ID"]) : null;
     const plan = it["Plan ID"] ? byId("plans", it["Plan ID"]) : null;
+    const owner = K === KINDS.bills ? ownedBy(it) : "";
+    const ownerLink = it["Loan ID"] ? "#/financial/loan/" + encodeURIComponent(it["Loan ID"]) : (rows("plans").find(x => x["Bill ID"] === id) ? "#/financial/plan/" + encodeURIComponent(rows("plans").find(x => x["Bill ID"] === id)["Plan ID"]) : "");
+    const card = it["Card ID"] ? byId("cards", it["Card ID"]) : null;
     const hero = '<div class="card hero"><h2>' + esc(it["Name"]) + '</h2><div class="meta">' + esc([it[K.id], it["Group"], it["Category"]].filter(Boolean).join(" · ")) + '</div>' +
       '<div class="fin-amount">' + esc(money(it["Amount"])) + ' <span>' + esc(freqText(it)) + '</span></div>' +
+      (owner ? '<p class="hint fin-owned">' + esc(owner) + ' <a href="' + ownerLink + '">Open</a></p>' : "") +
       (can(K.items, "edit", it) ? '<div class="actions"><button class="btn" data-mod-edit="' + K.items + '" data-id="' + esc(id) + '">Edit</button>' +
         (can(K.entries, "add") ? '<button class="btn" data-fin="add-entry" data-kind="' + (K === KINDS.bills ? "bills" : "income") + '" data-id="' + esc(id) + '">' + ICONS.plus + 'One-off entry</button>' : "") + '</div>' : "") + '</div>';
     const details = kv([
       [K === KINDS.bills ? "Autopay" : "Automatic", it["Autopay"] === true ? "Yes" : "No"],
       ["Paid by", it["Paid By"]],
       [K === KINDS.bills ? "Paid from" : "Deposited to", acct ? acct["Nickname"] : ""],
+      ["Card", card ? cardLabel(card) : ""],
       ["Loan", loan ? link("#/financial/loan/" + encodeURIComponent(loan["Loan ID"]), loan["Name"]) : "", true],
       ["Saving toward", plan ? link("#/financial/plan/" + encodeURIComponent(plan["Plan ID"]), plan["Goal"]) : "", true],
       ["Reminder", it["Reminder"] === true ? "Task to " + String(it["Reminder To"] || "USR-1").split(",").filter(Boolean).map(id => M.userName(ctx, id)).join(", ") + ", " + plural(Number(it["Reminder Days"] === "" ? 3 : it["Reminder Days"]), "day") + " before" : ""],
@@ -341,7 +405,7 @@
       '<div class="card list">' + (ls.map(l => {
         const s = D().loanStatus[l["Loan ID"]] || {};
         return '<a class="list-item fin-loanrow" href="#/financial/loan/' + encodeURIComponent(l["Loan ID"]) + '"><div class="body"><div class="title">' + esc(l["Name"]) + ' <span class="fin-right">' + esc(money(s.remaining)) + '</span></div>' +
-          bar(s.progress) + '<div class="sub">' + esc([payoffText(s, l), s.monthly ? money(s.monthly) + " / mo" : ""].filter(Boolean).join(" · ")) + '</div></div></a>';
+          bar(s.progress) + '<div class="sub">' + esc([instName(l["Institution ID"]), payoffText(s, l), s.monthly ? money(s.monthly) + " / mo" : ""].filter(Boolean).join(" · ")) + '</div></div></a>';
       }).join("") || '<div class="empty">No loans yet.</div>') + '</div>';
     return { title: "Loans", back: true, html: html };
   }
@@ -353,36 +417,61 @@
     const veh = l["Vehicle ID"] ? byId("vehicles", l["Vehicle ID"]) : null;
     const acct = l["Account ID"] ? byId("accounts", l["Account ID"]) : null;
     const bills = (s.bills || []).map(b => byId("bills", b)).filter(Boolean);
-    const from = l["Balance Date"] || "";
+    const from = s.from || l["Balance Date"] || "";
     const billIds = {}; rows("bills").filter(b => b["Loan ID"] === id).forEach(b => billIds[b["Bill ID"]] = true);
     const pays = rows("entries").filter(e => billIds[e["Bill ID"]] && e["Status"] === "Paid" && (e["Paid Date"] || e["Due Date"]) >= from)
       .map(e => ({ date: e["Paid Date"] || e["Due Date"], html: entryRow("entries", e, { showName: true }) }))
       .concat(rows("loanpays").filter(p => p["Loan ID"] === id).map(p => ({ date: p["Date"], html:
         '<div class="list-item" role="button" tabindex="0" data-mod-edit="loanpays" data-id="' + esc(p["Loan Payment ID"]) + '"><span class="thumb">' + IC.loan + '</span><div class="body"><div class="title">' + esc(p["Kind"]) + '</div><div class="sub">' + esc([day(p["Date"]), p["Notes"]].filter(Boolean).join(" · ")) + '</div></div><div class="vh-cost">' + esc(money(p["Amount"])) + '</div></div>' })))
       .sort((a, b) => String(b.date).localeCompare(String(a.date)));
-    const html = '<div class="card hero"><h2>' + esc(l["Name"]) + '</h2><div class="meta">' + esc([l["Loan ID"], l["Lender"]].filter(Boolean).join(" · ")) + '</div>' +
+    const html = '<div class="card hero"><h2>' + esc(l["Name"]) + '</h2><div class="meta">' + esc([l["Loan ID"], instName(l["Institution ID"])].filter(Boolean).join(" · ")) + '</div>' +
       '<div class="fin-amount">' + esc(money(s.remaining)) + ' <span>left</span></div>' + bar(s.progress) +
-      '<div class="meta">' + esc("Paid " + money(s.paid) + " of " + money(s.start) + " since " + day(l["Balance Date"])) + '</div>' +
+      '<div class="meta">' + esc("Paid down " + money(s.paid) + " of " + money(s.start) + (from ? " since " + day(from) : "") + (s.interest ? " · interest paid " + money(s.interest) : "")) + '</div>' +
       '<div class="meta"><b>' + esc(payoffText(s, l)) + '</b></div>' +
       '<div class="actions">' + (can("loans", "edit", l) ? '<button class="btn" data-mod-edit="loans" data-id="' + esc(id) + '">Edit</button>' : "") +
         (can("loanpays", "add") ? '<button class="btn" data-fin="add-loanpay" data-id="' + esc(id) + '">' + ICONS.plus + 'Extra payment / adjustment</button>' : "") + '</div></div>' +
-      kv([["Monthly payment", s.monthly ? money(s.monthly) : ""], ["Interest rate", l["Interest Rate"] !== "" ? l["Interest Rate"] + "% APR" : ""],
+      kv([["Payment", l["Payment"] !== "" ? money(l["Payment"]) + " · " + (l["Payment Frequency"] || "Monthly") + (l["Autopay"] === true ? " · autopay" : "") : ""],
+        ["First payment", day(l["First Payment Date"])], ["Original amount", l["Original Amount"] !== "" ? money(l["Original Amount"]) : ""],
+        ["Loan start", day(l["Start Date"])], ["Term", l["Term Months"] ? plural(Number(l["Term Months"]), "month") : ""],
+        ["Current balance", l["Starting Balance"] !== "" ? money(l["Starting Balance"]) + " as of " + day(l["Balance Date"]) : ""],
+        ["Monthly payment", s.monthly ? money(s.monthly) : ""], ["Interest rate", l["Interest Rate"] !== "" ? l["Interest Rate"] + "% APR" : ""],
         ["Vehicle", veh ? link("#/vehicles/v/" + encodeURIComponent(veh["Vehicle ID"]), veh["Name"]) : "", true],
         ["Account", acct ? acct["Nickname"] : ""], ["Paid off", day(l["Paid Off Date"])], ["Notes", l["Notes"]]]) +
       section("Payment bills", '<div class="card list">' + (bills.map(b => '<a class="list-item" href="#/financial/bill/' + encodeURIComponent(b["Bill ID"]) + '"><div class="body"><div class="title">' + esc(b["Name"]) + '</div><div class="sub">' + esc(money(b["Amount"]) + " · " + freqText(b)) + '</div></div><span class="thumb">' + ICONS.next + '</span></a>').join("") ||
-        '<div class="empty">No bill linked. Edit the payment bill and pick this loan, so its payments lower the balance.</div>') + '</div>') +
+        '<div class="empty">No payment bill yet. Edit the loan and add the payment and first payment date: its bill is made for you.</div>') + '</div>') +
       section("Payments", '<div class="card list">' + (pays.map(p => p.html).join("") || '<div class="empty">No payments since ' + esc(day(from)) + '.</div>') + '</div>');
     return { title: l["Name"], back: true, html: html };
   }
 
+  // Institutions, each with its accounts; each account with its cards.
   function viewAccounts() {
-    const as = rows("accounts").slice().sort((a, b) => ((b["Active"] !== false) - (a["Active"] !== false)) || String(a["Nickname"]).localeCompare(String(b["Nickname"])));
-    const html = (can("accounts", "add") ? '<div class="actions" style="margin:0 0 8px"><button class="btn primary" data-mod-add="accounts">' + ICONS.plus + 'Add account</button></div>' : "") +
-      '<div class="card list">' + (as.map(a => '<div class="list-item' + (a["Active"] === false ? " dim" : "") + '"><span class="thumb">' + IC.account + '</span>' +
-        '<div class="body" role="button" tabindex="0" data-mod-edit="accounts" data-id="' + esc(a["Account ID"]) + '"><div class="title">' + esc(a["Nickname"]) + '</div><div class="sub">' + esc([a["Kind"], a["Institution"], a["Card Last 4"] ? "Card ••" + a["Card Last 4"] : "", a["Account Last 4"] ? "Acct ••" + a["Account Last 4"] : "", a["Owner"]].filter(Boolean).join(" · ")) + '</div>' +
+    const act = r => r["Active"] !== false;
+    const insts = rows("institutions").slice().sort((a, b) => (act(b) - act(a)) || String(a["Name"]).localeCompare(String(b["Name"])));
+    const cardRow = c => '<div class="list-item fin-card' + (!act(c) || c["Status"] === "Closed" ? " dim" : "") + '" role="button" tabindex="0" data-mod-edit="cards" data-id="' + esc(c["Card ID"]) + '">' +
+      '<div class="body"><div class="title">' + esc(cardLabel(c)) + '</div><div class="sub">' + esc([c["Card Type"], c["Status"] === "Closed" ? "Closed" : ""].filter(Boolean).join(" · ")) + '</div></div></div>';
+    const acctRow = a => {
+      const cards = rows("cards").filter(c => c["Account ID"] === a["Account ID"]).sort((x, y) => (act(y) - act(x)) || String(x["Last 4"]).localeCompare(String(y["Last 4"])));
+      const owners = String(a["Owners"] || "").split(",").filter(Boolean).map(id => M.userName(ctx, id)).join(", ");
+      const sub = [a["Kind"], a["Account Last 4"] ? "Acct ••" + a["Account Last 4"] : "", owners,
+        a["Kind"] === "Credit Card" && a["Credit Limit"] !== "" ? "Limit " + money(a["Credit Limit"]) : "",
+        a["Payment Due Day"] ? "Due the " + ord(Number(a["Payment Due Day"])) : "", a["APR"] !== "" && a["APR"] !== undefined ? a["APR"] + "% APR" : ""].filter(Boolean).join(" · ");
+      return '<div class="fin-acct' + (act(a) ? "" : " dim") + '"><div class="list-item"><span class="thumb">' + IC.account + '</span>' +
+        '<div class="body" role="button" tabindex="0" data-mod-edit="accounts" data-id="' + esc(a["Account ID"]) + '"><div class="title">' + esc(a["Nickname"]) + '</div><div class="sub">' + esc(sub) + '</div>' +
         (a["Balance"] !== "" && a["Balance"] !== undefined ? '<div class="sub">' + esc("Balance " + money(a["Balance"]) + (a["Balance Date"] ? " as of " + day(a["Balance Date"]) : "")) + '</div>' : "") + '</div>' +
-        (a["Website"] ? '<a class="link-btn" href="' + esc(a["Website"]) + '" target="_blank" rel="noopener">Website</a>' : "") + (a["Active"] === false ? '<span class="pill">Off</span>' : "") + '</div>').join("") || '<div class="empty">No accounts yet.</div>') + '</div>' +
-      '<p class="hint">Only the last 4 digits of card and account numbers are kept. No full numbers or passwords.</p>';
+        (act(a) ? "" : '<span class="pill">Off</span>') +
+        (can("cards", "add") ? '<button class="link-btn" data-fin="add-card" data-id="' + esc(a["Account ID"]) + '">+ Card</button>' : "") + '</div>' +
+        (cards.length ? '<div class="fin-cards">' + cards.map(cardRow).join("") + '</div>' : "") + '</div>';
+    };
+    const html = (can("institutions", "add") ? '<div class="actions" style="margin:0 0 8px"><button class="btn primary" data-mod-add="institutions">' + ICONS.plus + 'Add institution</button></div>' : "") +
+      (insts.map(i => {
+        const accts = rows("accounts").filter(a => a["Institution ID"] === i["Institution ID"]).sort((a, b) => (act(b) - act(a)) || String(a["Nickname"]).localeCompare(String(b["Nickname"])));
+        const head = '<div class="fin-inst-head"><div class="body" role="button" tabindex="0" data-mod-edit="institutions" data-id="' + esc(i["Institution ID"]) + '"><b>' + esc(i["Name"]) + '</b>' +
+          '<span class="sub">' + esc([i["Type"], i["Phone"]].filter(Boolean).join(" · ")) + '</span></div>' +
+          (i["Website"] ? '<a class="link-btn" href="' + esc(i["Website"]) + '" target="_blank" rel="noopener">Website</a>' : "") +
+          (can("accounts", "add") ? '<button class="link-btn" data-fin="add-account" data-id="' + esc(i["Institution ID"]) + '">+ Account</button>' : "") + '</div>';
+        return '<div class="card list fin-inst' + (act(i) ? "" : " dim") + '">' + head + (accts.map(acctRow).join("") || '<div class="empty">No accounts yet.</div>') + '</div>';
+      }).join("") || '<div class="card"><div class="empty">No institutions yet. Add a bank, credit union or card issuer first, then its accounts.</div></div>') +
+      '<p class="hint">Only the last 4 digits of card and account numbers are kept. No full numbers, passwords or expiration dates.</p>';
     return { title: "Accounts", back: true, html: html };
   }
 
@@ -393,7 +482,7 @@
         const s = D().planStatus[p["Plan ID"]] || {};
         return '<a class="list-item fin-loanrow' + (p["Status"] !== "Active" ? " dim" : "") + '" href="#/financial/plan/' + encodeURIComponent(p["Plan ID"]) + '"><div class="body"><div class="title">' + esc(p["Goal"]) +
           ' <span class="fin-right">' + esc(money(s.saved) + (s.target !== null && s.target !== undefined ? " of " + money(s.target) : "")) + '</span></div>' + bar(s.progress) +
-          '<div class="sub">' + esc([p["Status"] !== "Active" ? p["Status"] : "", p["Target Date"] ? "By " + day(p["Target Date"]) : "", s.needed !== null && s.needed !== undefined ? money(s.needed) + " / mo needed" : ""].filter(Boolean).join(" · ")) + '</div></div></a>';
+          '<div class="sub">' + esc([p["Status"] !== "Active" ? p["Status"] : "", p["Target Date"] ? "By " + day(p["Target Date"]) : "", p["Transfer On"] === true ? "Auto " + money(p["Transfer Amount"]) + " " + String(p["Transfer Frequency"] || "Monthly").toLowerCase() : "", s.needed !== null && s.needed !== undefined ? money(s.needed) + " / mo needed" : ""].filter(Boolean).join(" · ")) + '</div></div></a>';
       }).join("") || '<div class="empty">No goals yet.</div>') + '</div>';
     return { title: "Plan / Save For", back: true, html: html };
   }
@@ -414,16 +503,34 @@
     }).join("");
     const html = '<div class="card hero"><h2>' + esc(p["Goal"]) + '</h2><div class="meta">' + esc([p["Plan ID"], p["Status"] !== "Active" ? p["Status"] : ""].filter(Boolean).join(" · ")) + '</div>' +
       '<div class="fin-amount">' + esc(money(s.saved)) + ' <span>' + esc(s.target !== null && s.target !== undefined ? "of " + money(s.target) : "saved") + '</span></div>' + bar(s.progress) +
-      (s.needed !== null && s.needed !== undefined ? '<div class="meta"><b>' + esc(money(s.needed) + " a month") + '</b>' + esc(" to reach it by " + day(p["Target Date"]) + (s.pastDate ? " (date has passed)" : "")) + '</div>' : "") +
+      neededHtml(p, s) +
       (can("plans", "edit", p) ? '<div class="actions"><button class="btn" data-mod-edit="plans" data-id="' + esc(id) + '">Edit</button></div>' : "") + '</div>' +
       kv([["Target", p["Target Amount"] !== "" ? money(p["Target Amount"]) : chosen ? money(chosen["Total"]) + " (chosen option)" : ""], ["Target date", day(p["Target Date"])],
-        ["Saved before tracking", p["Starting Saved"] !== "" ? money(p["Starting Saved"]) : ""], ["From savings bills", s.contributions ? money(s.contributions) : ""],
+        ["Saved before tracking", p["Starting Saved"] !== "" ? money(p["Starting Saved"]) : ""], ["Transfers and savings bills", s.contributions ? money(s.contributions) : ""],
+        ["Automatic transfer", p["Transfer On"] === true ? money(p["Transfer Amount"]) + " · " + (p["Transfer Frequency"] || "Monthly") + " from " + day(p["First Transfer Date"]) +
+          (p["Transfer Account ID"] && byId("accounts", p["Transfer Account ID"]) ? " · from " + byId("accounts", p["Transfer Account ID"])["Nickname"] : "") : ""],
         ["Planned each month", p["Monthly Contribution"] !== "" ? money(p["Monthly Contribution"]) : ""], ["Notes", p["Notes"]]]) +
       section("Options", optHtml || '<div class="card"><div class="empty">No options yet. Add one for each choice you’re comparing.</div></div>',
         can("options", "add") ? '<button class="link-btn" data-fin="add-option" data-id="' + esc(id) + '">+ Option</button>' : "") +
       section("Savings bills", '<div class="card list">' + (bills.map(b => '<a class="list-item" href="#/financial/bill/' + encodeURIComponent(b["Bill ID"]) + '"><div class="body"><div class="title">' + esc(b["Name"]) + '</div><div class="sub">' + esc(money(b["Amount"]) + " · " + freqText(b)) + '</div></div><span class="thumb">' + ICONS.next + '</span></a>').join("") ||
         '<div class="empty">No savings bill linked. Pick this goal under “Saving toward” on a savings bill so its payments count.</div>') + '</div>');
     return { title: p["Goal"], back: true, html: html };
+  }
+
+  // How much to save by a method (default: how the transfer runs) to reach the target by its date.
+  const METHODS = [["Daily", 1], ["Weekly", 7], ["Every 2 weeks", 14], ["Twice a month", 30.4375 / 2], ["Monthly", 30.4375]];
+  function neededHtml(p, s) {
+    if (s.target === null || s.target === undefined || !p["Target Date"]) return "";
+    const left = Math.max(0, s.target - s.saved);
+    if (!left) return '<div class="meta"><b>Target reached</b></div>';
+    const tf = p["Transfer Frequency"], def = p["Transfer On"] === true ? (tf === "Weekly" || tf === "Every 2 weeks" ? tf : "Monthly") : "Monthly";
+    const m = fin.method[p["Plan ID"]] || def;
+    const days = Math.max(1, Math.round((M.parseIso(p["Target Date"]) - M.parseIso(today())) / 86400000));
+    const step = (METHODS.find(x => x[0] === m) || METHODS[4])[1];
+    const times = Math.max(1, Math.floor(days / step));
+    return '<div class="fin-needed"><b>' + esc(money(left / times)) + '</b> <select data-fin="method" data-id="' + esc(p["Plan ID"]) + '" aria-label="How often">' +
+      METHODS.map(x => '<option' + (x[0] === m ? " selected" : "") + '>' + x[0] + '</option>').join("") + '</select> <span>' +
+      esc("to reach it by " + day(p["Target Date"]) + (s.pastDate ? " (date has passed)" : "") + " · " + money(left) + " to go") + '</span></div>';
   }
 
   // Option editor: name, chosen, cost lines (item, price, quantity) with a running total.
@@ -604,6 +711,8 @@
         M.recordForm(ctx, K.entries, "", { prefill: { [K.id]: d.id, "Due Date": today(), "Amount": it ? it["Amount"] : "", "Status": K.open }, hide: [K.id], title: "One-off entry · " + (it ? it["Name"] : "") });
         break;
       }
+      case "add-account": M.recordForm(ctx, "accounts", "", { prefill: { "Institution ID": d.id }, title: "Add account · " + instName(d.id) }); break;
+      case "add-card": { const a = byId("accounts", d.id); M.recordForm(ctx, "cards", "", { prefill: { "Account ID": d.id, "Cardholder": String((a || {})["Owners"] || "").split(",")[0] || C.state.me.id }, hide: ["Account ID"], title: "Add card · " + ((a || {})["Nickname"] || "") }); break; }
       case "add-loanpay": M.recordForm(ctx, "loanpays", "", { prefill: { "Loan ID": d.id, "Date": today() }, hide: ["Loan ID"], title: "Extra payment / adjustment" }); break;
       case "add-option": optionForm(d.id, ""); break;
       case "edit-option": { const o = byId("options", d.id); if (o) optionForm(o["Plan ID"], d.id); break; }
@@ -628,5 +737,6 @@
     const t = e.target;
     if (!t || !t.matches || C.parseRoute().name !== "financial") return;
     if (t.matches("[data-fin='days']")) { fin.days = +t.value; C.render(); }
+    if (t.matches("[data-fin='method']")) { fin.method[t.dataset.id] = t.value; C.render(); }
   });
 })();
