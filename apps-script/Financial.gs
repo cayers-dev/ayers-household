@@ -809,6 +809,7 @@ function finReport_(def, year) {
    const on = k => { const m = mods.find(x => x.key === k); return !!(m && m.spreadsheetId); };
    try { if (on("vehicles")) add("Vehicles – service", modRows_(vehiclesDef_(), "visits"), "Date", "Total"); } catch (e) { console.warn("Vehicles report: " + e); }
    try { if (on("hockey")) add("Travel Hockey – expenses", modRows_(hockeyDef_(), "expenses"), "Date", "Amount"); } catch (e) { console.warn("Hockey report: " + e); }
+   try { if (on("work") && typeof workDef_ === "function") add("Work – receipts", modRows_(workDef_(), "receipts"), "Date", "Total"); } catch (e) { console.warn("Work report: " + e); }
    return { year: year, months: months, sections: sections, remaining: remaining, remainingTotal: sum(remaining), other: other, today: vehToday_() };
 }
 function finReportAction_(req, user) {

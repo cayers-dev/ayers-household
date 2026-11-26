@@ -37,7 +37,7 @@ const SETUP_MODULES = [
    ["inventory", "Inventory",                   "Coming soon", 30, "Household items with purchase, warranty and repair history.", "", SETUP_FOLDERS.inventory],
    ["financial", "Financial",                   "Coming soon", 40, "Bills, income, loans, accounts and plan / save for.", "", SETUP_FOLDERS.financial],
    ["tasks",     "Tasks",                       "Coming soon", 50, "Personal task lists with Google Tasks sync.", "", SETUP_FOLDERS.tasks],
-   ["work",      "Work",                        "Coming soon", 60, "Comp / OT tracker and monthly timesheet.", "", SETUP_FOLDERS.work],
+   ["work",      "Work",                        "Coming soon", 60, "Comp / OT and time sheet, work receipts and job applications.", "", SETUP_FOLDERS.work],
    ["home",      "Home Maintenance & Projects", "Coming soon", 70, "Projects, quotes, invoices, receipts, contacts and recurring maintenance.", "", SETUP_FOLDERS.home],
    ["shopping",  "Shopping List",               "Coming soon", 80, "One shared list, filtered by store.", "", SETUP_FOLDERS.shopping]
 ];

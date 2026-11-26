@@ -166,6 +166,9 @@ function tasksAfterDone_(def, row, user) {
    if (/^pets:/.test(key) && typeof petsTaskDone_ === "function") {
       try { petsTaskDone_(key.slice(5), user); } catch (e) { console.warn("Pets entry not updated: " + e); }
    }
+   if (/^work:/.test(key) && typeof workTaskDone_ === "function") {
+      try { workTaskDone_(key.slice(5), user); } catch (e) { console.warn("Work entry not updated: " + e); }
+   }
    if (/^financial:/.test(key) && typeof finTaskDone_ === "function") {
       try { finTaskDone_(key.slice(10), user); } catch (e) { console.warn("Financial entry not updated: " + e); }
    }

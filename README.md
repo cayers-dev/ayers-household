@@ -31,9 +31,10 @@ Mobile web app for the Ayers household: vehicles, travel hockey, inventory, fina
 | `TasksGoogle.gs` | Two-way sync between a person's tasks and their Google Tasks (My Tasks): connect once, app changes sent at once, Google changes pulled on open / Sync now. Needs the Tasks API on and the client secret saved (Tasks ▸ Set up). |
 | `Financial.gs` | Financial: bills and income (default amount + frequency; entries made 3 months ahead, Paid / Received automatically on autopay), reminder tasks, loans (balance, payoff estimate, shown on the vehicle), accounts (last 4 digits only), Plan / Save For (options with cost lines), the yearly month grid, statements in Drive, sending a paid bill to Travel Hockey. `financialSetup()`. |
 | `Pets.gs` | Pets: pets (details, food, weights), places, vet visits (treatments given, records, follow-ups), treatments with intervals and their log, medications and refills, reminders as tasks, Due Soon. `petsSetup()` also adds the module, its areas and access to Core. |
+| `Work.gs` | Work: comp / OT time entries (OT 1.5×, comp used, July–June fiscal year) and the monthly B-2CL time sheet; work receipts with line items (category, rationale, person, tax and shipping spread) and the yearly per-person report; job applications (companies, contacts, jobs, statuses, communication log, follow-ups as tasks, files). `workSetup()` turns the module on and adds its areas and access. |
 | `Vehicles.gs` | Vehicles: vehicles, features, plates, places, service visits and lines, odometer, intervals (due dates, mileage estimates), insurance policies and cards, registrations, files in Drive, Due Soon. `vehiclesSetup()`. |
 
-Front-end files: `app.js` (core), `modules.js` (shared module screens: forms, list managers, deleted items), `hockey.js` (Travel Hockey screens), `shopping.js` (Shopping List), `vehicles.js` (Vehicles), `tasks.js` (Tasks), `financial.js` (Financial), `pets.js` (Pets).
+Front-end files: `app.js` (core), `modules.js` (shared module screens: forms, list managers, deleted items), `hockey.js` (Travel Hockey screens), `shopping.js` (Shopping List), `vehicles.js` (Vehicles), `tasks.js` (Tasks), `financial.js` (Financial), `pets.js` (Pets), `work.js` (Work).
 
 ## Modules
 
@@ -44,7 +45,7 @@ Front-end files: `app.js` (core), `modules.js` (shared module screens: forms, li
 | inventory | Inventory | Coming soon |
 | financial | Financial | Active (spreadsheet "Ayers Household - Financial"); not shared with anyone |
 | tasks | Tasks | Active (spreadsheet "Ayers Household - Tasks"); with Google Tasks sync |
-| work | Work | Coming soon |
+| work | Work | Active (spreadsheet "Ayers Household - Work"); comp / OT is Chris only until opened to others in Permissions |
 | home | Home Maintenance & Projects | Coming soon |
 | pets | Pets | Active (spreadsheet "Ayers Household - Pets") |
 | shopping | Shopping List | Active (spreadsheet "Ayers Household - Shopping List") |
@@ -54,3 +55,4 @@ Requirements and decisions: the "Household App Set Up - with Follow-Up Questions
 ## Planned
 
 - Export reports (Financial month grid and others) to a file.
+- Inventory: receipt lines ticked "Add to Inventory" go there once Inventory is built.
