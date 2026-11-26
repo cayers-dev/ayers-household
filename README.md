@@ -30,9 +30,10 @@ Mobile web app for the Ayers household: vehicles, travel hockey, inventory, fina
 | `Tasks.gs` | Tasks: per-person and household tasks, status list, checklists, repeats, Home ▸ My tasks, tasks from other modules (Vehicles follow-ups). `tasksSetup()`. |
 | `TasksGoogle.gs` | Two-way sync between a person's tasks and their Google Tasks (My Tasks): connect once, app changes sent at once, Google changes pulled on open / Sync now. Needs the Tasks API on and the client secret saved (Tasks ▸ Set up). |
 | `Financial.gs` | Financial: bills and income (default amount + frequency; entries made 3 months ahead, Paid / Received automatically on autopay), reminder tasks, loans (balance, payoff estimate, shown on the vehicle), accounts (last 4 digits only), Plan / Save For (options with cost lines), the yearly month grid, statements in Drive, sending a paid bill to Travel Hockey. `financialSetup()`. |
+| `Pets.gs` | Pets: pets (details, food, weights), places, vet visits (treatments given, records, follow-ups), treatments with intervals and their log, medications and refills, reminders as tasks, Due Soon. `petsSetup()` also adds the module, its areas and access to Core. |
 | `Vehicles.gs` | Vehicles: vehicles, features, plates, places, service visits and lines, odometer, intervals (due dates, mileage estimates), insurance policies and cards, registrations, files in Drive, Due Soon. `vehiclesSetup()`. |
 
-Front-end files: `app.js` (core), `modules.js` (shared module screens: forms, list managers, deleted items), `hockey.js` (Travel Hockey screens), `shopping.js` (Shopping List), `vehicles.js` (Vehicles), `tasks.js` (Tasks), `financial.js` (Financial).
+Front-end files: `app.js` (core), `modules.js` (shared module screens: forms, list managers, deleted items), `hockey.js` (Travel Hockey screens), `shopping.js` (Shopping List), `vehicles.js` (Vehicles), `tasks.js` (Tasks), `financial.js` (Financial), `pets.js` (Pets).
 
 ## Modules
 
@@ -45,6 +46,7 @@ Front-end files: `app.js` (core), `modules.js` (shared module screens: forms, li
 | tasks | Tasks | Active (spreadsheet "Ayers Household - Tasks"); with Google Tasks sync |
 | work | Work | Coming soon |
 | home | Home Maintenance & Projects | Coming soon |
+| pets | Pets | Active (spreadsheet "Ayers Household - Pets") |
 | shopping | Shopping List | Active (spreadsheet "Ayers Household - Shopping List") |
 
 Requirements and decisions: the "Household App Set Up - with Follow-Up Questions" Google Doc.

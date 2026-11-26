@@ -1070,3 +1070,10 @@ img.thumb[data-file-id] { cursor: pointer; }
 .fin-needed b { font-size: 18px; color: var(--text); }
 .fin-needed select { padding: 4px 6px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; }
 .fin-acct .sub { white-space: normal; overflow: visible; text-overflow: clip; }
+
+/* ---------- Pets ---------- */
+.pt-sched .pt-given { flex: none; }
+.pt-sched.overdue .pt-due { color: var(--danger); }
+.pt-sched.off { opacity: .6; }
+.pt-trts { display: flex; flex-wrap: wrap; gap: 2px 16px; }
+.pt-diff { font-size: 13px; color: var(--muted); font-weight: 400; }

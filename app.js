@@ -9,7 +9,7 @@
   const CFG = window.HH_CONFIG || {};
   const TOKEN_KEY = "hh_id_token";     // Google sign-in pass (only until the server gives a session)
   const SESSION_KEY = "hh_session";    // the app's own session: { token, exp }
-  const APP_VERSION = "28";
+  const APP_VERSION = "29";
 
   const state = {
     token: null, session: null, sessionExp: 0,
@@ -130,10 +130,11 @@
     tasks: svg('<path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1.2 1.2L7 5M3.5 12l1.2 1.2L7 11M3.5 18l1.2 1.2L7 17"/>'),
     work: svg('<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7"/><path d="M3 12.5h18"/>'),
     homeMaint: svg('<path d="M3.5 11L12 4l8.5 7"/><path d="M5.5 9.5V20h13V9.5"/><path d="M14.5 12.5a2.5 2.5 0 0 0-3.3 3.2l-2.2 2.2 1.1 1.1 2.2-2.2a2.5 2.5 0 0 0 3.2-3.3l-1.4 1.4-1.2-.3-.3-1.2z"/>'),
-    shopping: svg('<path d="M4 7h16l-1.6 11.2a2 2 0 0 1-2 1.8H7.6a2 2 0 0 1-2-1.8z"/><path d="M8.5 7V5.5a3.5 3.5 0 0 1 7 0V7"/>')
+    shopping: svg('<path d="M4 7h16l-1.6 11.2a2 2 0 0 1-2 1.8H7.6a2 2 0 0 1-2-1.8z"/><path d="M8.5 7V5.5a3.5 3.5 0 0 1 7 0V7"/>'),
+    pets: svg('<ellipse cx="12" cy="16" rx="4.2" ry="3.4"/><circle cx="6.2" cy="10.6" r="1.8"/><circle cx="9.4" cy="6.8" r="1.8"/><circle cx="14.6" cy="6.8" r="1.8"/><circle cx="17.8" cy="10.6" r="1.8"/>')
   };
   const MODULE_ICON = { vehicles: "vehicles", hockey: "hockey", inventory: "inventory", financial: "financial",
-                        tasks: "tasks", work: "work", home: "homeMaint", shopping: "shopping" };
+                        tasks: "tasks", work: "work", home: "homeMaint", shopping: "shopping", pets: "pets" };
   const moduleIcon = key => ICONS[MODULE_ICON[key]] || ICONS.grid;
 
   // What each role means, in plain words (Permissions screen and Account).
