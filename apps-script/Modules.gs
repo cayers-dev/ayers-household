@@ -88,15 +88,20 @@ function modRows_(def, tableKey, includeDeleted) {
       const values = coreGrid_(sheet).values;
       const headers = (values[0] || []).map(h => String(h).trim());
       const tz = coreSs_().getSpreadsheetTimeZone();
-      const types = {};
-      t.fields.forEach(f => types[f.name] = f.type);
+      const types = {}, digits = {};
+      t.fields.forEach(f => { types[f.name] = f.type; if (f.digits) digits[f.name] = f.digits; });
       ["Active", "Deleted"].forEach(n => types[n] = "bool");
       ["Added At", "Updated At", "Deleted At"].forEach(n => types[n] = "datetime");
       const rows = [];
       for (let i = 1; i < values.length; i++) {
          if (!String(values[i][headers.indexOf(t.id)] || "").trim()) continue;
          const o = { _row: i + 1 };
-         headers.forEach((h, c) => { if (h) o[h] = modOut_(values[i][c], types[h], tz); });
+         headers.forEach((h, c) => {
+            if (!h) return;
+            o[h] = modOut_(values[i][c], types[h], tz);
+            // Fixed-length digit text (e.g. last 4): a cell Sheets turned into a number gets its leading zeros back.
+            if (digits[h] && /^\d+$/.test(o[h]) && o[h].length < digits[h]) o[h] = o[h].padStart(digits[h], "0");
+         });
          if (t.kind === "list" && values[i][headers.indexOf("Active")] === "") o["Active"] = true;
          rows.push(o);
       }
@@ -105,6 +110,27 @@ function modRows_(def, tableKey, includeDeleted) {
    return MOD_ROWS[ck].filter(r => includeDeleted || !r["Deleted"]);
 }
 function modForget_(def, tableKey) { delete MOD_ROWS[def.key + "/" + tableKey]; }
+
+// A text column of fixed-length digits (e.g. last 4): set it to plain text and rewrite any cell
+// Sheets stored as a number (123 -> "0123"). Returns how many cells were fixed.
+function modFixDigits_(def, tableKey, fieldName) {
+   const t = def.tables[tableKey], f = t.fields.find(x => x.name === fieldName);
+   const sheet = modSheet_(def, t);
+   const head = sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getValues()[0].map(h => String(h).trim());
+   const c = head.indexOf(fieldName) + 1, last = sheet.getLastRow();
+   if (!c) return 0;
+   sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setNumberFormat("@");
+   if (last < 2) return 0;
+   const rng = sheet.getRange(2, c, last - 1, 1), vals = rng.getValues();
+   let n = 0;
+   const fixed = vals.map(r => {
+      const v = r[0];
+      if (typeof v === "number" || (/^\d+$/.test(String(v)) && String(v).length < (f.digits || 0))) { n++; return [String(v).padStart(f.digits || 0, "0")]; }
+      return [v];
+   });
+   if (n) { rng.setValues(fixed); delete CORE_GRID[coreGridKey_(sheet)]; modForget_(def, tableKey); }
+   return n;
+}
 
 // Cell value -> app value for a field type.
 function modOut_(v, type, tz) {
@@ -527,6 +553,7 @@ function modBuildTabs_(def) {
          if (f.type === "datetime") sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setNumberFormat("m/d/yyyy h:mm am/pm");
          if (f.type === "money") sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setNumberFormat("$#,##0.00");
          if (f.type === "time") sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setNumberFormat("@");   // kept as text, e.g. 14:30
+         if (f.digits || f.asText) sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setNumberFormat("@");   // plain text: keeps leading zeros (e.g. 0123)
       });
       // Tick boxes as validation only: empty cells show an unticked box without making
       // the tab look 1,000 rows long (which slows every read).

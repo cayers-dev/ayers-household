@@ -163,7 +163,8 @@
         input = '<input type="url" inputmode="url" id="' + id + '" name="' + esc(f.name) + '" value="' + esc(v) + '"' + req + '>';
         break;
       default:
-        input = '<input type="text" id="' + id + '" name="' + esc(f.name) + '" value="' + esc(v) + '"' + req + '>';
+        input = '<input type="text" id="' + id + '" name="' + esc(f.name) + '" value="' + esc(v) + '"' + req +
+          (f.inputmode ? ' inputmode="' + esc(f.inputmode) + '"' : "") + (f.digits ? ' pattern="\\d{' + f.digits + '}" autocomplete="off"' : "") + '>';
     }
     return '<div class="field">' + lab + input + hint + '</div>';
   }

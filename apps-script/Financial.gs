@@ -151,7 +151,7 @@ function financialDef_() {
                { name: "Institution ID", label: "Institution", type: "ref", ref: "institutions", required: true },
                { name: "Kind", type: "choice", options: ["Checking", "Savings", "Credit Card", "Loan", "Retirement", "Other"], required: true, default: "Checking" },
                { name: "Owners", type: "users" },
-               { name: "Account Last 4", label: "Account – last 4 digits", type: "text" },
+               { name: "Account Last 4", label: "Account – last 4 digits", type: "text", digits: 4, inputmode: "numeric" },
                { name: "Credit Limit", type: "money", hint: "Credit cards" },
                { name: "Statement Day", type: "number", hint: "Day of the month the statement closes" },
                { name: "Payment Due Day", type: "number", hint: "Day of the month payment is due" },
@@ -165,7 +165,7 @@ function financialDef_() {
             fields: [
                { name: "Account ID", label: "Account", type: "ref", ref: "accounts", required: true },
                { name: "Cardholder", type: "user", required: true },
-               { name: "Last 4", label: "Card – last 4 digits", type: "text", required: true },
+               { name: "Last 4", label: "Card – last 4 digits", type: "text", required: true, digits: 4, inputmode: "numeric" },
                { name: "Network", type: "choice", options: ["Visa", "Mastercard", "Amex", "Discover", "Other"] },
                { name: "Card Type", type: "choice", options: ["Credit", "Debit"], required: true, default: "Credit" },
                { name: "Status", type: "choice", options: ["Active", "Closed"], required: true, default: "Active" },
@@ -1098,8 +1098,9 @@ function financialUpgrade_(def, owner) {
       const row = modRows_(def, "accounts", true).find(x => x["Account ID"] === a["Account ID"]);
       coreWriteChanges_(modSheet_(def, def.tables.accounts), row._row, row, ch);
       moved++;
-      if (/^\d{4}$/.test(String(a["Card Last 4"] || "")) && !modRows_(def, "cards", true).some(c => c["Account ID"] === a["Account ID"] && c["Last 4"] === String(a["Card Last 4"]))) {
-         modInsert_(def, "cards", { "Account ID": a["Account ID"], "Cardholder": who[0] || "USR-1", "Last 4": String(a["Card Last 4"]), "Card Type": a["Kind"] === "Credit Card" ? "Credit" : "Debit", "Status": "Active" }, owner);
+      const l4 = /^\d{1,4}$/.test(String(a["Card Last 4"] || "")) ? String(a["Card Last 4"]).padStart(4, "0") : "";
+      if (l4 && !modRows_(def, "cards", true).some(c => c["Account ID"] === a["Account ID"] && c["Last 4"] === l4)) {
+         modInsert_(def, "cards", { "Account ID": a["Account ID"], "Cardholder": who[0] || "USR-1", "Last 4": l4, "Card Type": a["Kind"] === "Credit Card" ? "Credit" : "Debit", "Status": "Active" }, owner);
          cards++;
       }
    });
@@ -1141,6 +1142,9 @@ function financialSetup() {
    if (lists.length) modBulkInsert_(def, "lists", lists, owner);
    out.push("List values added: " + lists.length);
    out.push(financialUpgrade_(def, owner));
+   // Last 4 columns as plain text, so leading zeros stay (0123, not 123).
+   const z = modFixDigits_(def, "cards", "Last 4") + modFixDigits_(def, "accounts", "Account Last 4");
+   out.push("Last 4 kept as text" + (z ? " (" + z + " fixed)" : ""));
    // Areas: Reports, and the Bills area's name.
    const areas = coreSheet_(CORE_CONFIG.tabs.areas), am = coreHeaderMap_(areas).map;
    const arows = coreTable_(CORE_CONFIG.tabs.areas).rows;

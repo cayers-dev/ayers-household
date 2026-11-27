@@ -9,7 +9,7 @@
   const CFG = window.HH_CONFIG || {};
   const TOKEN_KEY = "hh_id_token";     // Google sign-in pass (only until the server gives a session)
   const SESSION_KEY = "hh_session";    // the app's own session: { token, exp }
-  const APP_VERSION = "31";
+  const APP_VERSION = "32";
 
   const state = {
     token: null, session: null, sessionExp: 0,
