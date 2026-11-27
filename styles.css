@@ -1161,3 +1161,5 @@ img.thumb[data-file-id] { cursor: pointer; }
 .fin-lk-warn { color: var(--danger); }
 .fin-lk-who { color: var(--text); font-weight: 600; }
 .fin-lk-last4 { flex: none; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+.fin-lk-list .sub { white-space: normal; overflow: visible; text-overflow: clip; }
+.fin-lk-list .fin-lk-last4 { font-size: 16px; max-width: 45%; text-align: right; overflow-wrap: anywhere; }

@@ -1,7 +1,7 @@
 /* Ayers Household - Financial screens
  * Financial home (this month, bills due and income coming in the next N days, with a tick to mark
  * them paid), bills and income (grouped, with upcoming and past entries), loans (balance, payoff),
- * accounts (last 4 digits only), Plan / Save For (options with cost lines), the yearly month grid,
+ * accounts (last 4, plus a suffix for accounts), Plan / Save For (options with cost lines), the yearly month grid,
  * and the dropdown lists. Data comes from financial.load; simple adds and edits use the shared
  * module engine (modules.js).
  */
@@ -296,21 +296,35 @@
     return sum % 10 === 0;
   }
   const netKey = n => String(n || "").toLowerCase().replace(/american express/, "amex").replace(/[^a-z]/g, "");
+  // Matches as you type. Digits: a card's / account's last 4 containing them (first keystrokes), or a
+  // longer typed number ending in them (a full number). An account's suffix (1234 S:00) doesn't get in the
+  // way: 1234 finds it. Typing letters too (S:00) narrows by the whole saved text.
+  const lkNorm = v => String(v || "").toLowerCase().replace(/[\s•.\-]/g, "");
   function lookupResults(raw) {
-    const d = String(raw || "").replace(/\D/g, "");
-    if (d.length < 4) return '<p class="hint fin-lk-note">Type or paste the number (at least the last 4 digits). It stays on this device: it isn’t sent, saved or logged.</p>';
-    const last4 = d.slice(-4), net = cardNetwork(d);
-    const hits = D().lookup.filter(x => x.last4 === last4).map(x => Object.assign({ off: !!(net && x.kind === "Card" && x.network && netKey(x.network) !== netKey(net)) }, x))
-      .sort((a, b) => (a.off - b.off) || ((b.active !== false) - (a.active !== false)) || (a.kind === "Card" ? -1 : 1));
+    const q = String(raw || "").trim(), d = /^[\d\s\-.]+$/.test(q) ? q.replace(/\D/g, "") : "";
+    if (!q) return '<p class="hint fin-lk-note">Start typing a card or account number — matches show as you type. It stays on this device: it isn’t sent, saved or logged.</p>';
+    const net = cardNetwork(d);
+    const hits = [];
+    D().lookup.forEach(x => {
+      const base = (/\d+/.exec(String(x.last4)) || [""])[0];
+      let rank = -1;
+      if (d) {
+        if (base && (d === base || (d.length > base.length && d.endsWith(base)))) rank = 0;
+        else if (base.indexOf(d) !== -1) rank = 1;
+      } else if (lkNorm(x.last4).indexOf(lkNorm(q)) !== -1) rank = 0;
+      if (rank >= 0) hits.push(Object.assign({ rank: rank, off: !!(net && x.kind === "Card" && x.network && netKey(x.network) !== netKey(net)) }, x));
+    });
+    hits.sort((a, b) => (a.rank - b.rank) || (a.off - b.off) || ((b.active !== false) - (a.active !== false)) || (a.kind === "Card" ? -1 : 1) || String(a.last4).localeCompare(String(b.last4)));
     const warn = net && d.length >= 13 && !luhnOk(d) ? '<p class="hint fin-lk-warn">That doesn’t look like a valid card number (check digit) — a digit may be mistyped. Matching on the last 4 anyway.</p>' : "";
-    if (!hits.length) return warn + '<div class="card"><div class="empty">No card or account on file ends in those digits.</div></div>';
+    if (!hits.length) return warn + '<div class="card"><div class="empty">No card or account on file matches.</div></div>';
+    const exact = hits.filter(x => x.rank === 0).length;
     return warn + '<div class="card list fin-lk-list">' + hits.map(x => '<div class="list-item' + (x.off || x.active === false || x.status === "Closed" ? " dim" : "") + '"><span class="thumb">' + (x.kind === "Card" ? IC.account : IC.loan) + '</span><div class="body">' +
       '<div class="title">' + esc(x.institution || "(no institution)") + '</div>' +
       '<div class="sub">' + esc([x.kind === "Card" ? [x.network, x.type, "card"].filter(Boolean).join(" ") : (x.type || "Account"), x.account].filter(Boolean).join(" · ")) + '</div>' +
       '<div class="sub fin-lk-who">' + esc(x.people.join(", ") || "No person set") + (x.status && x.status !== "Active" ? " · " + esc(x.status) : x.active === false ? " · turned off" : "") + '</div>' +
       (x.off ? '<div class="sub fin-lk-warn">Typed number looks like ' + esc(net) + '; this card is ' + esc(x.network) + '.</div>' : "") + '</div>' +
       '<div class="fin-lk-last4">••' + esc(x.last4) + '</div></div>').join("") + '</div>' +
-      (hits.length > 1 ? '<p class="hint">' + esc(hits.length + " match the last 4 — confirm by institution and person.") + '</p>' : "");
+      (exact > 1 ? '<p class="hint">' + esc(exact + " match — confirm by institution, person and suffix.") + '</p>' : "");
   }
   const lookupBox = big => (fin.lkHash !== location.hash ? (fin.lk = "") : "") + '<div class="fin-lookup' + (big ? " big" : "") + '"><div class="fin-lk-field">' + IC.search +
     '<input type="text" inputmode="numeric" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-fin-lookup aria-label="Card or account number" placeholder="Look up a card or account number" value="' + esc(fin.lk || "") + '">' +
@@ -517,7 +531,7 @@
           (can("accounts", "add") ? '<button class="link-btn" data-fin="add-account" data-id="' + esc(i["Institution ID"]) + '">+ Account</button>' : "") + '</div>';
         return '<div class="card list fin-inst' + (act(i) ? "" : " dim") + '">' + head + (accts.map(acctRow).join("") || '<div class="empty">No accounts yet.</div>') + '</div>';
       }).join("") || '<div class="card"><div class="empty">No institutions yet. Add a bank, credit union or card issuer first, then its accounts.</div></div>') +
-      '<p class="hint">Only the last 4 digits of card and account numbers are kept. No full numbers, passwords or expiration dates.</p>';
+      '<p class="hint">Cards keep only their last 4 digits; accounts keep their last 4, plus a suffix when two share it (1234 S:00). No passwords or expiration dates.</p>';
     return { title: "Accounts", back: true, html: (lookupOn() ? lookupBox(false) : "") + html };
   }
 
@@ -788,10 +802,10 @@
   document.addEventListener("input", e => {
     const i = e.target.closest && e.target.closest("[data-fin-lookup]");
     if (!i || !fin.data) return;
-    const box = i.closest(".fin-lookup"), digits = i.value.replace(/\D/g, "");
+    const box = i.closest(".fin-lookup");
     fin.lk = i.value; fin.lkHash = location.hash;
     box.querySelector('[data-fin="lk-clear"]').hidden = !i.value;
-    box.querySelector(".fin-lk-out").innerHTML = digits.length || box.classList.contains("big") ? lookupResults(i.value) : "";
+    box.querySelector(".fin-lk-out").innerHTML = i.value.trim() || box.classList.contains("big") ? lookupResults(i.value) : "";
   });
   document.addEventListener("change", e => {
     const t = e.target;

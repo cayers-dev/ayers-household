@@ -151,7 +151,7 @@ function financialDef_() {
                { name: "Institution ID", label: "Institution", type: "ref", ref: "institutions", required: true },
                { name: "Kind", type: "choice", options: ["Checking", "Savings", "Credit Card", "Loan", "Retirement", "Other"], required: true, default: "Checking" },
                { name: "Owners", type: "users" },
-               { name: "Account Last 4", label: "Account – last 4 digits", type: "text", digits: 4, inputmode: "numeric" },
+               { name: "Account Last 4", label: "Account – last 4 (and suffix)", type: "text", asText: true, hint: "e.g. 1234, or 1234 S:00 / 1234 C:01 when accounts share the last 4" },
                { name: "Credit Limit", type: "money", hint: "Credit cards" },
                { name: "Statement Day", type: "number", hint: "Day of the month the statement closes" },
                { name: "Payment Due Day", type: "number", hint: "Day of the month payment is due" },
@@ -539,7 +539,9 @@ function finBeforeSave_(tableKey, values, before, user, req) {
    }
    const last4 = n => { if (n in values && values[n] !== "" && !/^\d{4}$/.test(String(values[n]))) throw coreError_("INVALID", "Only the last 4 digits can be saved (no full card or account numbers)."); };
    const dayOfMonth = n => { if (n in values && values[n] !== "") { const d = Number(values[n]); if (!(d >= 1 && d <= 31 && d === Math.round(d))) throw coreError_("INVALID", n + " must be a day of the month (1–31)."); } };
-   if (tableKey === "accounts") { last4("Account Last 4"); dayOfMonth("Statement Day"); dayOfMonth("Payment Due Day"); }
+   // Accounts: the last 4 with an optional suffix to tell them apart (1234 S:00, 1234 C:01).
+   if (tableKey === "accounts" && "Account Last 4" in values && String(values["Account Last 4"]).length > 30) throw coreError_("INVALID", "Account – last 4 is too long (30 characters at most).");
+   if (tableKey === "accounts") { dayOfMonth("Statement Day"); dayOfMonth("Payment Due Day"); }
    if (tableKey === "cards") last4("Last 4");
    if (tableKey === "bills" && merged["Card ID"]) {
       const card = vehFind_(def, "cards", merged["Card ID"]);
@@ -1143,8 +1145,8 @@ function financialSetup() {
    out.push("List values added: " + lists.length);
    out.push(financialUpgrade_(def, owner));
    // Last 4 columns as plain text, so leading zeros stay (0123, not 123).
-   const z = modFixDigits_(def, "cards", "Last 4") + modFixDigits_(def, "accounts", "Account Last 4");
-   out.push("Last 4 kept as text" + (z ? " (" + z + " fixed)" : ""));
+   modTextColumn_(def, "cards", "Last 4"); modTextColumn_(def, "accounts", "Account Last 4");
+   out.push("Last 4 columns are plain text");
    // Areas: Reports, and the Bills area's name.
    const areas = coreSheet_(CORE_CONFIG.tabs.areas), am = coreHeaderMap_(areas).map;
    const arows = coreTable_(CORE_CONFIG.tabs.areas).rows;
