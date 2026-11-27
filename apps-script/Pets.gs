@@ -74,7 +74,7 @@ function petsDef_() {
             fields: [
                { name: "Name", type: "text", required: true },
                { name: "Type", type: "list", list: "Place Type", required: true, default: "Vet" },
-               { name: "Phone", type: "text" },
+               { name: "Phone", type: "phone" },
                { name: "Address", type: "text" },
                { name: "Website", type: "url" },
                { name: "Notes", type: "longtext" }

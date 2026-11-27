@@ -112,7 +112,7 @@ function vehiclesDef_() {
                { name: "Name", type: "text", required: true },
                { name: "Type", type: "list", list: "Place Type", required: true },
                { name: "Address", type: "text" },
-               { name: "Phone", type: "text" },
+               { name: "Phone", type: "phone" },
                { name: "Website", type: "url" },
                { name: "Notes", type: "longtext" }
             ] },

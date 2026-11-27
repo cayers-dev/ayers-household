@@ -537,7 +537,7 @@
       (can("companies", "edit", c) ? '<div class="actions"><button class="btn" data-mod-edit="companies" data-id="' + esc(id) + '">Edit</button></div>' : "") + '</div>' +
       kv([["Website", c["Website"] ? linkify(c["Website"]) : "", true], ["Notes", c["Notes"]]]) +
       section("Contacts", '<div class="card list">' + (contacts.map(k => '<div class="list-item" role="button" tabindex="0" data-mod-edit="contacts" data-id="' + esc(k["Contact ID"]) + '"><div class="body"><div class="title">' + esc(k["Name"]) + '</div>' +
-        '<div class="sub">' + esc([k["Title"], k["Email"], k["Phone"]].filter(Boolean).join(" · ")) + '</div></div></div>').join("") || '<div class="empty">No contacts yet.</div>') + '</div>',
+        '<div class="sub">' + [esc(k["Title"] || ""), esc(k["Email"] || ""), k["Phone"] ? M.phoneLink(k["Phone"]) : ""].filter(Boolean).join(" · ") + '</div></div></div>').join("") || '<div class="empty">No contacts yet.</div>') + '</div>',
         can("contacts", "add") ? '<button class="link-btn" data-wk="add-contact" data-id="' + esc(id) + '">+ Add</button>' : "") +
       section("Applications", '<div class="card list">' + (apps.map(appRow).join("") || '<div class="empty">None yet.</div>') + '</div>',
         can("applications", "add") ? '<button class="link-btn" data-wk="add-app" data-company="' + esc(id) + '">+ Add</button>' : "");

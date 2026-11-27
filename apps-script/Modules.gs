@@ -233,6 +233,13 @@ function modClean_(def, t, raw, user, before) {
          if (rt.kind === "list" && target["Active"] === false) throw coreError_("INVALID", (f.label || f.name) + ": that choice is turned off.");
       } else if (v !== "" && f.type === "user" && !same) {
          if (!coreGetUsers_().some(u => u.id === v)) throw coreError_("INVALID", (f.label || f.name) + ": unknown person.");
+      } else if (v !== "" && f.type === "phone") {
+         // Digits only; a leading 1 on an 11-digit US number is dropped. Shown as (###) ###-#### in the app.
+         let d = String(v).replace(/\D/g, "");
+         if (d.length === 11 && d[0] === "1") d = d.slice(1);
+         if (d.length < 7) throw coreError_("INVALID", (f.label || f.name) + " needs at least 7 digits.");
+         if (d.length > 15) throw coreError_("INVALID", (f.label || f.name) + " is too long.");
+         v = d;
       } else if (f.type === "users") {
          // Several people: "USR-1,USR-2" (an array is fine too).
          const ids = (Array.isArray(v) ? v : String(v).split(",")).map(x => String(x).trim()).filter((x, i, a) => x && a.indexOf(x) === i);
@@ -536,7 +543,7 @@ function modBuildTabs_(def) {
          if (f.type === "datetime") sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setNumberFormat("m/d/yyyy h:mm am/pm");
          if (f.type === "money") sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setNumberFormat("$#,##0.00");
          if (f.type === "time") sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setNumberFormat("@");   // kept as text, e.g. 14:30
-         if (f.digits || f.asText) sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setNumberFormat("@");   // plain text: keeps leading zeros (e.g. 0123)
+         if (f.digits || f.asText || f.type === "phone") sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setNumberFormat("@");   // plain text: keeps leading zeros (e.g. 0123)
       });
       // Tick boxes as validation only: empty cells show an unticked box without making
       // the tab look 1,000 rows long (which slows every read).

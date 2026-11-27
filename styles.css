@@ -1163,3 +1163,23 @@ img.thumb[data-file-id] { cursor: pointer; }
 .fin-lk-last4 { flex: none; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .04em; }
 .fin-lk-list .sub { white-space: normal; overflow: visible; text-overflow: clip; }
 .fin-lk-list .fin-lk-last4 { font-size: 16px; max-width: 45%; text-align: right; overflow-wrap: anywhere; }
+a.tel-link { color: var(--primary); text-decoration: none; font-weight: 600; white-space: nowrap; }
+a.tel-link:active { opacity: .7; }
+.fin-inst-head .body { cursor: default; gap: 2px; }
+.fin-inst-head b, .fin-acct .title[role="button"] { cursor: pointer; }
+.fin-inst-head .sub a:not(.tel-link) { color: var(--primary); }
+.fin-toggle { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; margin-top: 4px; padding: 3px 10px 3px 6px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.fin-toggle .fin-chev { display: inline-flex; transition: transform .15s; }
+.fin-toggle .fin-chev svg { width: 14px; height: 14px; }
+.fin-toggle.on .fin-chev { transform: rotate(90deg); }
+.fin-toggle.on { border-color: var(--primary); color: var(--primary); }
+.fin-nocards { color: var(--muted); font-size: 13px; margin-top: 2px; }
+/* Home summary: Income · Paid · Upcoming · Overdue · Left */
+.fin-month .fin-stats { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+@media (max-width: 560px) { .fin-month .fin-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 10px; } }
+/* "Show the next xx days" through Income coming in: one panel */
+.fin-next { margin: 4px 0 16px; padding: 10px 12px 2px; border: 1px solid var(--border); border-left: 4px solid var(--primary); border-radius: 16px; background: var(--surface-2); }
+.fin-next .fin-window { margin: 0 0 6px; font-weight: 600; }
+.fin-next .section-head:first-of-type, .fin-next h3:first-of-type { margin-top: 4px; }
+.fin-pf { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 12px 14px; }
+.fin-pf .hint { flex-basis: 100%; }

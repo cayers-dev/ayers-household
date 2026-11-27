@@ -23,6 +23,19 @@
     const m = /T(\d{2}):(\d{2})/.exec(String(s || "")); if (!m) return "";
     const h = +m[1]; return ((h % 12) || 12) + ":" + m[2] + (h < 12 ? " AM" : " PM");
   }
+  // Phone: stored as digits; shown (###) ###-####, extra digits as an extension; tap to call.
+  function phoneDigits(v) { let d = String(v || "").replace(/\D/g, ""); if (d.length === 11 && d[0] === "1") d = d.slice(1); return d; }
+  function phone(v) {
+    const d = phoneDigits(v);
+    if (d.length < 10) return String(v || "");
+    return "(" + d.slice(0, 3) + ") " + d.slice(3, 6) + "-" + d.slice(6, 10) + (d.length > 10 ? " x" + d.slice(10) : "");
+  }
+  function phoneLink(v) {
+    const d = phoneDigits(v);
+    if (!d) return "";
+    const href = d.length >= 10 ? "+1" + d.slice(0, 10) + (d.length > 10 ? "," + d.slice(10) : "") : d;
+    return '<a class="tel-link" href="tel:' + esc(href) + '">' + esc(phone(v)) + '</a>';
+  }
   const fmtDayTime = s => fmtDay(s) + (fmtTime(s) ? ", " + fmtTime(s) : "");
   const userName = (ctx, id) => { const u = (ctx.data().users || []).find(x => x.id === id); return u ? u.name : id || ""; };
   const userLabel = (ctx, id) => { const u = (ctx.data().users || []).find(x => x.id === id); return u ? u.id + " " + u.name : id || ""; };
@@ -56,7 +69,7 @@
   // Choices for a link (ref) field: active, not deleted, plus the current value.
   function refChoices(ctx, f, current) {
     const rt = ctx.schema(f.ref);
-    return ctx.rows(f.ref).filter(r => !r["Deleted"] && (r["Active"] !== false || r[rt.id] === current))
+    return ctx.rows(f.ref).filter(r => !r["Deleted"] && (r["Active"] !== false || r[rt.id] === current) && (!ctx.refFilter || r[rt.id] === current || ctx.refFilter(f, r)))
       .map(r => ({ value: r[rt.id], label: ctx.refLabel(f.ref, r) + (r["Active"] === false ? " (off)" : "") }))
       .sort((a, b) => ctx.refSort ? ctx.refSort(f.ref, a, b) : a.label.localeCompare(b.label));
   }
@@ -77,6 +90,7 @@
     if (f.type === "bool") return v === true ? "Yes" : "No";
     if (v === "" || v === null || v === undefined) return "";
     if (f.type === "money") return money(v);
+    if (f.type === "phone") return phone(v);
     if (f.type === "percent") return v + "%";
     if (f.type === "date") return fmtDay(v, { year: "numeric" });
     if (f.type === "datetime") return fmtDayTime(v);
@@ -110,7 +124,7 @@
     }
     if (f.readOnly || opts.readOnly) {
       if (v === "" && f.type !== "bool") return "";
-      return '<div class="field"><label>' + label + '</label><div class="ro-value">' + esc(shownValue(ctx, f, v)) + '</div>' + (opts.readOnly ? "" : hint) + '</div>';
+      return '<div class="field"><label>' + label + '</label><div class="ro-value">' + (f.type === "phone" ? phoneLink(v) : esc(shownValue(ctx, f, v))) + '</div>' + (opts.readOnly ? "" : hint) + '</div>';
     }
     let input;
     switch (f.type) {
@@ -159,6 +173,9 @@
         break;
       case "bool":
         return '<div class="field"><label class="check"><input type="checkbox" name="' + esc(f.name) + '"' + (v === true ? " checked" : "") + '> ' + label + '</label>' + hint + '</div>';
+      case "phone":
+        input = '<input type="tel" inputmode="tel" autocomplete="tel" id="' + id + '" name="' + esc(f.name) + '" value="' + esc(phone(v)) + '"' + req + '>';
+        break;
       case "url":
         input = '<input type="url" inputmode="url" id="' + id + '" name="' + esc(f.name) + '" value="' + esc(v) + '"' + req + '>';
         break;
@@ -475,7 +492,8 @@
       '<div class="card list">' + (rows.map(r =>
         '<div class="list-item ' + (r["Active"] === false ? "dim" : "") + '" role="button" tabindex="0" data-mod-edit="' + esc(opts.table) + '" data-id="' + esc(r[t.id]) + '">' +
         '<div class="body"><div class="title">' + esc(opts.label ? opts.label(r) : ctx.refLabel(opts.table, r)) + '</div>' +
-        (opts.sub && opts.sub(r) ? '<div class="sub">' + esc(opts.sub(r)) + '</div>' : "") + '</div>' +
+        (opts.sub && opts.sub(r) ? '<div class="sub">' + esc(opts.sub(r)) + '</div>' : "") +
+        (opts.subHtml && opts.subHtml(r) ? '<div class="sub">' + opts.subHtml(r) + '</div>' : "") + '</div>' +
         (r["Active"] === false ? '<span class="pill">Off</span>' : "") + '</div>').join("") || '<div class="empty">Nothing here yet.</div>') + '</div>' +
       (t.kind === "list" ? '<p class="hint">Deleting one that’s used on old entries turns it off instead, so those entries keep it.</p>' : "");
     return { title: opts.title, back: true, html: html };
@@ -511,7 +529,7 @@
   // Clicks for the shared screens (each module passes its ctx via HH_MOD.current).
   document.addEventListener("click", async e => {
     const ctx = HH_MOD.current;
-    if (!ctx) return;
+    if (!ctx || e.target.closest("a.tel-link")) return;
     const add = e.target.closest("[data-mod-add]");
     if (add) { recordForm(ctx, add.dataset.modAdd, "", add.dataset.list ? { prefill: { "List": add.dataset.list }, lockList: true } : {}); return; }
     const edit = e.target.closest("[data-mod-edit]");
@@ -533,7 +551,7 @@
   const HH_MOD = window.HH_MOD = {
     current: null,
     money: money, parseIso: parseIso, isoDay: isoDay, fmtDay: fmtDay, fmtTime: fmtTime, fmtDayTime: fmtDayTime,
-    userName: userName, userLabel: userLabel,
+    userName: userName, userLabel: userLabel, phone: phone, phoneLink: phoneLink,
     can: can, tableCan: tableCan, fieldHtml: fieldHtml, recordForm: recordForm, confirmSheet: confirmSheet, chooseSheet: chooseSheet,
     listView: listView, deletedView: deletedView, clearDeleted: key => { delete deletedCache[key]; },
     fileHtml: fileHtml, uploadFile: uploadFile, pickedFiles: pickedFiles, wireFiles: wireFiles, filePicker: filePicker, photosToPdf: photosToPdf, wireAddNew: wireAddNew, shownValue: shownValue

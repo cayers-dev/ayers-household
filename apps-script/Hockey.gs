@@ -102,7 +102,7 @@ function hockeyDef_() {
                { name: "Rink Notes", type: "longtext", hint: "Which rink / sheet, locker rooms, pro shop..." },
                { name: "Parking", type: "longtext" },
                { name: "Contact", type: "text" },
-               { name: "Phone", type: "text" },
+               { name: "Phone", type: "phone" },
                { name: "Website", type: "url" },
                { name: "Notes", type: "longtext" }
             ] },

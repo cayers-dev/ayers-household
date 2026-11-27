@@ -325,7 +325,7 @@
     const t = [["", "Details", "vehicles"], ["service", "Service", "service"], ["insurance", "Insurance", "insurance"]].filter(x => see(x[2]));
     return t.length > 1 ? '<div class="segmented vh-tabs">' + t.map(x => '<button class="' + (x[0] === on ? "on" : "") + '" data-vh="tab" data-to="#/vehicles/v/' + encodeURIComponent(vid) + (x[0] ? "/" + x[0] : "") + '">' + x[1] + '</button>').join("") + '</div>' : "";
   }
-  const kv = pairs => { const p = pairs.filter(x => x[1] !== "" && x[1] !== undefined && x[1] !== null); return p.length ? '<div class="card kv">' + p.map(x => '<div class="k">' + esc(x[0]) + '</div><div>' + esc(x[1]) + '</div>').join("") + '</div>' : ""; };
+  const kv = pairs => { const p = pairs.filter(x => x[1] !== "" && x[1] !== undefined && x[1] !== null); return p.length ? '<div class="card kv">' + p.map(x => '<div class="k">' + esc(x[0]) + '</div><div>' + (x[2] ? x[1] : esc(x[1])) + '</div>').join("") + '</div>' : ""; };
 
   function viewVehicle(vid, tab) {
     const v = vehicle(vid);
@@ -484,7 +484,7 @@
     const state = !p ? "" : p["End Date"] < today ? "Expired" : p["Start Date"] > today ? "Not in effect yet" : "In effect";
     const html = (c["Card"] ? '<div class="card vh-file">' + M.fileHtml(ctx, c["Card"], "vh-cardbig") + '</div>' : '<div class="card"><div class="empty">No card image yet.</div></div>') +
       kv([["Vehicle", vLabel(v)], ["Carrier", carrier ? carrier["Name"] : ""], ["Policy", p ? p["Policy Number"] : ""], ["Effective", p ? day(p["Start Date"]) : ""], ["Expires", p ? day(p["End Date"]) : ""],
-          ["Status", state], ["Carrier phone", carrier ? carrier["Phone"] : ""], ["Notes", c["Notes"]]]) +
+          ["Status", state], ["Carrier phone", carrier && carrier["Phone"] ? M.phoneLink(carrier["Phone"]) : "", true], ["Notes", c["Notes"]]]) +
       '<div class="actions">' + (can("cards", "edit", c) ? '<button class="btn" data-mod-edit="cards" data-id="' + esc(id) + '">' + (c["Card"] ? "Change card image" : "Add card image") + '</button>' : "") +
         (p && can("policies", "edit", p) ? '<button class="btn" data-mod-edit="policies" data-id="' + esc(p["Policy ID"]) + '">Edit policy</button>' : "") +
         (p && can("cards", "add") ? '<button class="btn" data-vh="policy-add-veh" data-id="' + esc(p["Policy ID"]) + '">Add a vehicle to this policy</button>' : "") + '</div>';
@@ -520,7 +520,7 @@
       case "visit": return viewVisit(args[1]);
       case "cards": return viewCards();
       case "card": return viewCard(args[1]);
-      case "places": return M.listView(ctx, { table: "places", title: "Places", label: r => r["Name"], sub: r => [r["Type"], r["Phone"], r["Address"]].filter(Boolean).join(" · ") });
+      case "places": return M.listView(ctx, { table: "places", title: "Places", label: r => r["Name"], subHtml: r => [esc(r["Type"] || ""), r["Phone"] ? M.phoneLink(r["Phone"]) : "", esc(r["Address"] || "")].filter(Boolean).join(" · ") });
       case "features": return M.listView(ctx, { table: "features", title: "Features", label: r => r["Feature"], sub: r => r["Kind"] === "Value" ? "Value" : "" });
       case "actions": return viewActions();
       case "lists": return viewLists();

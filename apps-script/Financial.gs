@@ -45,7 +45,7 @@ function financialDef_() {
       { name: "Amount", type: "money", required: true, hint: "Default amount for each one" },
       { name: "Frequency", type: "choice", options: FIN_FREQ, required: true, default: "Monthly" },
       { name: "Every N Months", type: "number", hint: "Only for “Every N months”" },
-      { name: "Start Date", label: "First " + noun + " Date", type: "date", required: true, hint: "Sets the day it's " + word + " (e.g. the 15th). For “Last weekday of the month”, any day in the first month." },
+      { name: "Start Date", label: "First " + noun + " Date", type: "date", required: true, hint: "Sets the day it's " + word + " each time (e.g. the 15th)." },
       { name: "Second Day", label: "Second " + noun + " Day", type: "number", hint: "Only for “Twice a month”, e.g. 15" },
       { name: "End Date", label: "Last " + noun + " Date", type: "date", hint: "Blank = keeps going" }
    ];
@@ -141,7 +141,7 @@ function financialDef_() {
                { name: "Name", type: "text", required: true, hint: "e.g. Capital One" },
                { name: "Type", type: "choice", options: ["Bank", "Credit Union", "Card Issuer", "Lender", "Investment", "Other"], required: true, default: "Bank" },
                { name: "Website", type: "url" },
-               { name: "Phone", type: "text" },
+               { name: "Phone", type: "phone" },
                { name: "Notes", type: "longtext", hint: "No logins or passwords" }
             ] },
          accounts: { tab: "Accounts", label: "Accounts", id: "Account ID", prefix: "ACC-", kind: "list", area: "accounts",
@@ -224,6 +224,7 @@ function financialDef_() {
          file:        { fn: finFile_ },
          mark:        { fn: finMark_, write: true },
          setDays:     { fn: finSetDays_, write: true },
+         setPaidFrom: { fn: finSetPaidFrom_, write: true },
          upload:      { fn: finUpload_, write: true },
          clearFile:   { fn: finClearFile_, write: true },
          saveOption:  { fn: finSaveOption_, write: true },
@@ -506,12 +507,13 @@ function finBeforeSave_(tableKey, values, before, user, req) {
          const n = Number(merged["Every N Months"]);
          if (!(n >= 1 && n === Math.round(n))) throw coreError_("INVALID", "Every N months: enter how many months (a whole number).");
       } else if ("Every N Months" in values) values["Every N Months"] = "";
+      const word = tableKey === "income" ? "received" : "due";
       if (f === "Twice a month") {
          const d2 = Number(merged["Second Day"]), d1 = +finIso_(merged["Start Date"]).slice(8, 10);
-         if (!(d2 >= 1 && d2 <= 31 && d2 === Math.round(d2))) throw coreError_("INVALID", "Twice a month: enter the second due day (1–31).");
-         if (d2 === d1) throw coreError_("INVALID", "The second due day is the same as the first one's day.");
+         if (!(d2 >= 1 && d2 <= 31 && d2 === Math.round(d2))) throw coreError_("INVALID", "Twice a month: enter the second " + word + " day (1–31).");
+         if (d2 === d1) throw coreError_("INVALID", "The second " + word + " day is the same as the first one's day.");
       } else if ("Second Day" in values) values["Second Day"] = "";
-      if (merged["End Date"] && merged["Start Date"] && finIso_(merged["End Date"]) < finIso_(merged["Start Date"])) throw coreError_("INVALID", "The last due date is before the first one.");
+      if (merged["End Date"] && merged["Start Date"] && finIso_(merged["End Date"]) < finIso_(merged["Start Date"])) throw coreError_("INVALID", "The last " + word + " date is before the first " + word + " date.");
       if (tableKey === "bills" && "Reminder Days" in values && values["Reminder Days"] !== "") {
          const d = Number(values["Reminder Days"]);
          if (!(d >= 0 && d <= 60 && d === Math.round(d))) throw coreError_("INVALID", "Days before due must be a whole number from 0 to 60.");
@@ -863,6 +865,23 @@ function finLookupIndex_(def) {
    return out;
 }
 
+// Which account kinds show in the Paid From dropdowns (admins choose). Bills already paid from
+// another kind keep it.
+const FIN_PAIDFROM_DEFAULT = ["Checking", "Savings", "Credit Card"];
+function finPaidFromKinds_() {
+   try { const v = JSON.parse(PropertiesService.getScriptProperties().getProperty("fin_paidfrom_kinds") || "null"); if (Array.isArray(v)) return v; } catch (e) { }
+   return FIN_PAIDFROM_DEFAULT.slice();
+}
+function finSetPaidFrom_(req, user) {
+   coreRequireAdmin_(user);
+   const kinds = financialDef_().tables.accounts.fields.find(f => f.name === "Kind").options;
+   const pick = (Array.isArray(req.kinds) ? req.kinds : []).filter(k => kinds.indexOf(k) !== -1);
+   if (!pick.length) throw coreError_("INVALID", "Pick at least one account kind.");
+   PropertiesService.getScriptProperties().setProperty("fin_paidfrom_kinds", JSON.stringify(pick));
+   coreLog_(user, "financial", "Settings", "Paid From", "Account kinds", pick.join(", "));
+   return { kinds: pick };
+}
+
 function finLoad_(req, user) {
    const def = financialDef_();
    const see = a => coreCan_(user, "financial", a, "view");
@@ -877,7 +896,8 @@ function finLoad_(req, user) {
       lists: modRows_(def, "lists"),
       bills: [], entries: [], income: [], deposits: [], accounts: [], institutions: [], cards: [], loans: [], loanpays: [], loanStatus: {},
       plans: [], options: [], optlines: [], planStatus: {}, report: null, vehicles: [], hockey: null,
-      lookup: canLookup ? finLookupIndex_(def) : null
+      lookup: canLookup ? finLookupIndex_(def) : null,
+      paidFromKinds: finPaidFromKinds_()
    };
    if (see("bills")) { out.bills = modRows_(def, "bills"); out.entries = modRows_(def, "entries"); }
    if (see("income")) { out.income = modRows_(def, "income"); out.deposits = modRows_(def, "deposits"); }

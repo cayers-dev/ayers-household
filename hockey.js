@@ -541,7 +541,7 @@
   function venueCard(v) {
     const kv = [["Rink notes", v["Rink Notes"]], ["Parking", v["Parking"]], ["Contact", v["Contact"]]]
       .filter(x => x[1]).map(x => '<div class="k">' + esc(x[0]) + '</div><div>' + esc(x[1]) + '</div>').join("") +
-      (v["Phone"] ? '<div class="k">Phone</div><div><a href="tel:' + esc(String(v["Phone"]).replace(/[^\d+]/g, "")) + '">' + esc(v["Phone"]) + '</a></div>' : "") +
+      (v["Phone"] ? '<div class="k">Phone</div><div>' + M.phoneLink(v["Phone"]) + '</div>' : "") +
       (v["Website"] ? '<div class="k">Website</div><div><a href="' + esc(v["Website"]) + '" target="_blank" rel="noopener">' + esc(String(v["Website"]).replace(/^https?:\/\//, "")) + '</a></div>' : "");
     return '<div class="card"><a class="list-item" href="#/hockey/venue/' + encodeURIComponent(v["Venue ID"]) + '"><span class="thumb">' + IC.pin + '</span><div class="body"><div class="title">' + esc(v["Name"]) + '</div>' +
       (v["Address"] ? '<div class="sub">' + esc(v["Address"]) + '</div>' : "") + '</div></a>' + (kv ? '<div class="kv">' + kv + '</div>' : "") +

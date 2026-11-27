@@ -1,7 +1,7 @@
 /* Ayers Household - Financial screens
  * Financial home (this month, bills due and income coming in the next N days, with a tick to mark
  * them paid), bills and income (grouped, with upcoming and past entries), loans (balance, payoff),
- * accounts (last 4, plus a suffix for accounts), Plan / Save For (options with cost lines), the yearly month grid,
+ * accounts (collapsed by institution and account; last 4, plus a suffix for accounts), Plan / Save For (options with cost lines), the yearly month grid,
  * and the dropdown lists. Data comes from financial.load; simple adds and edits use the shared
  * module engine (modules.js).
  */
@@ -10,7 +10,7 @@
   const C = window.HH_CORE, M = window.HH_MOD;
   const { esc, $, $$, toast, ICONS, svg, section, plural } = C;
 
-  const fin = { data: null, loading: false, error: "", days: null, allHistory: {}, report: null, reportYear: null, reportLoading: false, openRows: {}, method: {} };
+  const fin = { data: null, loading: false, error: "", days: null, allHistory: {}, report: null, reportYear: null, reportLoading: false, openRows: {}, method: {}, open: {} };
   const IC = {
     search: svg('<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>'),
     bill: svg('<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>'),
@@ -130,6 +130,8 @@
     formOpts: t => ({ entries: { hide: ["Bill ID"] }, deposits: { hide: ["Income ID"] }, loanpays: { hide: ["Loan ID"] } }[t] || {}),
     // A bill made by a loan or a goal: its amount and schedule come from there.
     hideField: (t, name, values, row) => t === "bills" && row && ownedBy(row) && OWNED_FIELDS.indexOf(name) !== -1,
+    // Paid From: only the account kinds an admin picked (Financial ▸ Dropdown lists).
+    refFilter: (f, r) => !(f.ref === "accounts" && f.label === "Paid From") || !Array.isArray(D().paidFromKinds) || D().paidFromKinds.indexOf(r["Kind"]) !== -1,
     onFormReady: (t, form, row) => {
       const fieldOf = n => { const el = form.querySelector('[name="' + n + '"]'); return el && el.closest(".field"); };
       if (t === "bills") {
@@ -178,10 +180,33 @@
         }
       }
       if (t === "bills" || t === "income") {
+        // "Last weekday of the month": pick the first month instead of a day; the date becomes that
+        // month's last weekday (Mon–Fri).
+        const word = t === "income" ? "received" : "due";
+        const start = form.querySelector('input[name="Start Date"]'), sf = start && start.closest(".field");
+        let mf = null;
+        if (sf && !start.disabled) {
+          sf.insertAdjacentHTML("afterend", '<div class="field fin-lwd" hidden><label for="fin_lwd_month">First month ' + word + '</label><input type="month" id="fin_lwd_month">' +
+            '<div class="hint">Pick the month of the first payment. It’s ' + word + ' on the last weekday (Mon–Fri) of each month, starting then.</div><div class="hint fin-lwd-day"></div></div>');
+          mf = sf.nextElementSibling;
+          const mi = mf.querySelector("input");
+          const lastWeekday = ym => { const d = new Date(+ym.slice(0, 4), +ym.slice(5, 7), 0); while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1); return M.isoDay(d); };
+          mi.addEventListener("input", () => {
+            if (!/^\d{4}-\d{2}$/.test(mi.value)) return;
+            start.value = lastWeekday(mi.value);
+            mf.querySelector(".fin-lwd-day").textContent = "First one: " + M.fmtDay(start.value, { year: "numeric" });
+          });
+        }
         const sync = () => {
           const f = (form.querySelector('[name="Frequency"]') || {}).value;
           const a = fieldOf("Every N Months"); if (a) a.hidden = f !== "Every N months";
           const b = fieldOf("Second Day"); if (b) b.hidden = f !== "Twice a month";
+          if (mf) {
+            const lwd = f === "Last weekday of the month";
+            sf.hidden = lwd; mf.hidden = !lwd;
+            const mi = mf.querySelector("input");
+            if (lwd && !mi.value) { mi.value = (start.value || M.isoDay(new Date())).slice(0, 7); mi.dispatchEvent(new Event("input")); }
+          }
           const on = (form.querySelector('[name="Reminder"]') || {}).checked;
           ["Reminder To", "Reminder Days"].forEach(n => { const x = fieldOf(n); if (x) x.hidden = !on; });
         };
@@ -341,7 +366,16 @@
     const ym = t.slice(0, 7), tot = monthTotals(ym);
     const stats = [];
     if (see("income")) stats.push(["Income", money(tot.income)]);
-    if (see("bills")) stats.push(["Bills", money(tot.bills)]);
+    if (see("bills")) {
+      // Bills split three ways: paid this month, still to come this month, and overdue (any month).
+      const bl = rows("entries").filter(e => e["Status"] !== "Skipped");
+      const amt = list => list.reduce((x, e) => x + (Number(e["Amount"]) || 0), 0);
+      const thisMonth = bl.filter(e => String(e["Due Date"]).slice(0, 7) === ym);
+      const overdue = amt(bl.filter(e => unpaid(e) && e["Due Date"] < t));
+      stats.push(["Paid bills", money(amt(thisMonth.filter(e => e["Status"] === KINDS.bills.paid)))]);
+      stats.push(["Upcoming bills", money(amt(thisMonth.filter(e => unpaid(e) && e["Due Date"] >= t)))]);
+      stats.push(["Overdue bills", money(overdue), overdue > 0 ? "neg" : ""]);
+    }
     if (see("income") && see("bills")) stats.push(["Left", money(tot.income - tot.bills), tot.income - tot.bills < 0 ? "neg" : ""]);
     const hero = stats.length ? '<div class="card hero fin-month"><div class="meta">' + esc(monthName(ym)) + '</div><div class="fin-stats">' +
       stats.map(s => '<div class="fin-stat ' + (s[2] || "") + '"><span>' + esc(s[0]) + '</span><b>' + esc(s[1]) + '</b></div>').join("") + '</div></div>' : "";
@@ -376,7 +410,8 @@
       see("reports") ? tile("#/financial/report", IC.report, "Reports", "Month by month") : ""
     ].join("");
     const lists = can("lists", "add", null, { "List": "Category" }) ? section("Lists & settings", '<div class="card list"><a class="list-item" href="#/financial/lists"><span class="thumb">' + IC.tag + '</span><div class="body"><div class="title">Dropdown lists</div><div class="sub">Groups, categories, people</div></div><span class="thumb">' + ICONS.next + '</span></a></div>') : "";
-    const html = (lookupOn() ? lookupBox(false) : "") + hero + (see("bills") || see("income") ? win : "") + body + (tiles ? '<div class="home-grid fin-tiles">' + tiles + '</div>' : "") + lists +
+    const next = see("bills") || see("income") ? '<div class="fin-next">' + win + body + '</div>' : "";
+    const html = (lookupOn() ? lookupBox(false) : "") + hero + next + (tiles ? '<div class="home-grid fin-tiles">' + tiles + '</div>' : "") + lists +
       (C.isAdmin() ? '<p class="hint"><a href="#/financial/deleted">Deleted items</a></p>' : "");
     return { title: "Financial", back: true, html: html };
   }
@@ -509,27 +544,34 @@
     const insts = rows("institutions").slice().sort((a, b) => (act(b) - act(a)) || String(a["Name"]).localeCompare(String(b["Name"])));
     const cardRow = c => '<div class="list-item fin-card' + (!act(c) || c["Status"] === "Closed" ? " dim" : "") + '" role="button" tabindex="0" data-mod-edit="cards" data-id="' + esc(c["Card ID"]) + '">' +
       '<div class="body"><div class="title">' + esc(cardLabel(c)) + '</div><div class="sub">' + esc([c["Card Type"], c["Status"] === "Closed" ? "Closed" : ""].filter(Boolean).join(" · ")) + '</div></div></div>';
+    // Collapsed by default: an institution shows "2 Accounts", an account "2 Cards Assigned"; tap to open.
+    const open = k => !!fin.open[k];
+    const toggle = (k, label) => '<button type="button" class="fin-toggle' + (open(k) ? " on" : "") + '" data-fin="toggle" data-key="' + esc(k) + '" aria-expanded="' + open(k) + '">' +
+      '<span class="fin-chev">' + ICONS.next + '</span>' + esc(label) + '</button>';
     const acctRow = a => {
       const cards = rows("cards").filter(c => c["Account ID"] === a["Account ID"]).sort((x, y) => (act(y) - act(x)) || String(x["Last 4"]).localeCompare(String(y["Last 4"])));
       const owners = String(a["Owners"] || "").split(",").filter(Boolean).map(id => M.userName(ctx, id)).join(", ");
       const sub = [a["Kind"], a["Account Last 4"] ? "Acct ••" + a["Account Last 4"] : "", owners,
         a["Kind"] === "Credit Card" && a["Credit Limit"] !== "" ? "Limit " + money(a["Credit Limit"]) : "",
         a["Payment Due Day"] ? "Due the " + ord(Number(a["Payment Due Day"])) : "", a["APR"] !== "" && a["APR"] !== undefined ? a["APR"] + "% APR" : ""].filter(Boolean).join(" · ");
+      const k = "a:" + a["Account ID"];
       return '<div class="fin-acct' + (act(a) ? "" : " dim") + '"><div class="list-item"><span class="thumb">' + IC.account + '</span>' +
-        '<div class="body" role="button" tabindex="0" data-mod-edit="accounts" data-id="' + esc(a["Account ID"]) + '"><div class="title">' + esc(a["Nickname"]) + '</div><div class="sub">' + esc(sub) + '</div>' +
-        (a["Balance"] !== "" && a["Balance"] !== undefined ? '<div class="sub">' + esc("Balance " + money(a["Balance"]) + (a["Balance Date"] ? " as of " + day(a["Balance Date"]) : "")) + '</div>' : "") + '</div>' +
+        '<div class="body"><div class="title" role="button" tabindex="0" data-mod-edit="accounts" data-id="' + esc(a["Account ID"]) + '">' + esc(a["Nickname"]) + '</div>' +
+        (open(k) ? '<div class="sub">' + esc(sub) + '</div>' + (a["Balance"] !== "" && a["Balance"] !== undefined ? '<div class="sub">' + esc("Balance " + money(a["Balance"]) + (a["Balance Date"] ? " as of " + day(a["Balance Date"]) : "")) + '</div>' : "") : "") +
+        toggle(k, cards.length ? plural(cards.length, "Card") + " Assigned" : "No cards assigned") + '</div>' +
         (act(a) ? "" : '<span class="pill">Off</span>') +
         (can("cards", "add") ? '<button class="link-btn" data-fin="add-card" data-id="' + esc(a["Account ID"]) + '">+ Card</button>' : "") + '</div>' +
-        (cards.length ? '<div class="fin-cards">' + cards.map(cardRow).join("") + '</div>' : "") + '</div>';
+        (cards.length && open(k) ? '<div class="fin-cards">' + cards.map(cardRow).join("") + '</div>' : "") + '</div>';
     };
     const html = (can("institutions", "add") ? '<div class="actions" style="margin:0 0 8px"><button class="btn primary" data-mod-add="institutions">' + ICONS.plus + 'Add institution</button></div>' : "") +
       (insts.map(i => {
         const accts = rows("accounts").filter(a => a["Institution ID"] === i["Institution ID"]).sort((a, b) => (act(b) - act(a)) || String(a["Nickname"]).localeCompare(String(b["Nickname"])));
-        const head = '<div class="fin-inst-head"><div class="body" role="button" tabindex="0" data-mod-edit="institutions" data-id="' + esc(i["Institution ID"]) + '"><b>' + esc(i["Name"]) + '</b>' +
-          '<span class="sub">' + esc([i["Type"], i["Phone"]].filter(Boolean).join(" · ")) + '</span></div>' +
-          (i["Website"] ? '<a class="link-btn" href="' + esc(i["Website"]) + '" target="_blank" rel="noopener">Website</a>' : "") +
+        const k = "i:" + i["Institution ID"];
+        const head = '<div class="fin-inst-head"><div class="body"><b role="button" tabindex="0" data-mod-edit="institutions" data-id="' + esc(i["Institution ID"]) + '">' + esc(i["Name"]) + '</b>' +
+          '<span class="sub">' + [esc(i["Type"] || ""), i["Phone"] ? M.phoneLink(i["Phone"]) : "", i["Website"] ? '<a href="' + esc(i["Website"]) + '" target="_blank" rel="noopener">Web link</a>' : ""].filter(Boolean).join(" · ") + '</span>' +
+          (accts.length ? toggle(k, plural(accts.length, "Account")) : '<span class="sub fin-nocards">No accounts yet</span>') + '</div>' +
           (can("accounts", "add") ? '<button class="link-btn" data-fin="add-account" data-id="' + esc(i["Institution ID"]) + '">+ Account</button>' : "") + '</div>';
-        return '<div class="card list fin-inst' + (act(i) ? "" : " dim") + '">' + head + (accts.map(acctRow).join("") || '<div class="empty">No accounts yet.</div>') + '</div>';
+        return '<div class="card list fin-inst' + (act(i) ? "" : " dim") + '">' + head + (open(k) ? accts.map(acctRow).join("") : "") + '</div>';
       }).join("") || '<div class="card"><div class="empty">No institutions yet. Add a bank, credit union or card issuer first, then its accounts.</div></div>') +
       '<p class="hint">Cards keep only their last 4 digits; accounts keep their last 4, plus a suffix when two share it (1234 S:00). No passwords or expiration dates.</p>';
     return { title: "Accounts", back: true, html: (lookupOn() ? lookupBox(false) : "") + html };
@@ -723,8 +765,11 @@
 
   function viewLists() {
     const names = [["Group", "Groups (Expenses, Non-Essential, Savings…) — Sort sets their order"], ["Category", "Bill categories"], ["Person", "Paid by / account owner"]];
+    const kinds = ((ctx.schema("accounts").fields.find(f => f.name === "Kind") || {}).options || []), on = D().paidFromKinds || [];
+    const paidFrom = C.isAdmin() && Array.isArray(D().paidFromKinds) ? section("Paid From shows these account kinds", '<div class="card fin-pf">' + kinds.map(k => '<label class="check"><input type="checkbox" data-fin-pf value="' + esc(k) + '"' + (on.indexOf(k) !== -1 ? " checked" : "") + '> ' + esc(k) + '</label>').join("") +
+      '<div class="hint">Admins only. A bill already paid from another kind keeps it.</div></div>') : "";
     return { title: "Dropdown lists", back: true, html: '<div class="card list">' + names.map(n => '<a class="list-item" href="#/financial/list/' + encodeURIComponent(n[0]) + '"><span class="thumb">' + IC.tag + '</span><div class="body"><div class="title">' + esc(n[0]) + '</div>' +
-      '<div class="sub">' + esc(listVals(n[0]).join(", ") || n[1]) + '</div></div><span class="thumb">' + ICONS.next + '</span></a>').join("") + '</div>' };
+      '<div class="sub">' + esc(listVals(n[0]).join(", ") || n[1]) + '</div></div><span class="thumb">' + ICONS.next + '</span></a>').join("") + '</div>' + paidFrom };
   }
 
   function view(args) {
@@ -765,6 +810,7 @@
     const d = el.dataset;
     switch (d.fin) {
       case "retry": fin.error = ""; C.render(); break;
+      case "toggle": fin.open[d.key] = !fin.open[d.key]; C.render(); break;
       case "lk-clear": {
         const box = el.closest(".fin-lookup"), i = box.querySelector("[data-fin-lookup]");
         i.value = ""; fin.lk = ""; el.hidden = true; box.querySelector(".fin-lk-out").innerHTML = box.classList.contains("big") ? lookupResults("") : ""; i.focus();
@@ -777,8 +823,8 @@
         M.recordForm(ctx, K.entries, "", { prefill: { [K.id]: d.id, "Due Date": today(), "Amount": it ? it["Amount"] : "", "Status": K.open }, hide: [K.id], title: "One-off entry · " + (it ? it["Name"] : "") });
         break;
       }
-      case "add-account": M.recordForm(ctx, "accounts", "", { prefill: { "Institution ID": d.id }, title: "Add account · " + instName(d.id) }); break;
-      case "add-card": { const a = byId("accounts", d.id); M.recordForm(ctx, "cards", "", { prefill: { "Account ID": d.id, "Cardholder": String((a || {})["Owners"] || "").split(",")[0] || C.state.me.id }, hide: ["Account ID"], title: "Add card · " + ((a || {})["Nickname"] || "") }); break; }
+      case "add-account": fin.open["i:" + d.id] = true; M.recordForm(ctx, "accounts", "", { prefill: { "Institution ID": d.id }, title: "Add account · " + instName(d.id) }); break;
+      case "add-card": { fin.open["a:" + d.id] = true; const a = byId("accounts", d.id); M.recordForm(ctx, "cards", "", { prefill: { "Account ID": d.id, "Cardholder": String((a || {})["Owners"] || "").split(",")[0] || C.state.me.id }, hide: ["Account ID"], title: "Add card · " + ((a || {})["Nickname"] || "") }); break; }
       case "add-loanpay": M.recordForm(ctx, "loanpays", "", { prefill: { "Loan ID": d.id, "Date": today() }, hide: ["Loan ID"], title: "Extra payment / adjustment" }); break;
       case "add-option": optionForm(d.id, ""); break;
       case "edit-option": { const o = byId("options", d.id); if (o) optionForm(o["Plan ID"], d.id); break; }
@@ -812,5 +858,10 @@
     if (!t || !t.matches || C.parseRoute().name !== "financial") return;
     if (t.matches("[data-fin='days']")) { fin.days = +t.value; C.render(); }
     if (t.matches("[data-fin='method']")) { fin.method[t.dataset.id] = t.value; C.render(); }
+    if (t.matches("[data-fin-pf]")) {
+      const kinds = $$("[data-fin-pf]").filter(x => x.checked).map(x => x.value);
+      if (!kinds.length) { t.checked = true; toast("Keep at least one account kind.", true); return; }
+      ctx.save("financial.setPaidFrom", { kinds: kinds }, "Paid From updated").catch(err => { toast(err.message, true); C.render(); });
+    }
   });
 })();

@@ -114,7 +114,7 @@ function workDef_() {
                { name: "Name", type: "text", required: true },
                { name: "Title", type: "text" },
                { name: "Email", type: "text" },
-               { name: "Phone", type: "text" },
+               { name: "Phone", type: "phone" },
                { name: "LinkedIn", type: "url" },
                { name: "Notes", type: "text" }
             ] },

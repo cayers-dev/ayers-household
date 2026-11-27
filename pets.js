@@ -222,7 +222,7 @@
     const t = [["", "Details", "pets"], ["care", "Care", "care"], ["visits", "Vet visits", "visits"]].filter(x => see(x[2]));
     return t.length > 1 ? '<div class="segmented vh-tabs">' + t.map(x => '<button class="' + (x[0] === on ? "on" : "") + '" data-pt="tab" data-to="#/pets/p/' + encodeURIComponent(pid) + (x[0] ? "/" + x[0] : "") + '">' + x[1] + '</button>').join("") + '</div>' : "";
   }
-  const kv = pairs => { const p = pairs.filter(x => x[1] !== "" && x[1] !== undefined && x[1] !== null); return p.length ? '<div class="card kv">' + p.map(x => '<div class="k">' + esc(x[0]) + '</div><div>' + esc(x[1]) + '</div>').join("") + '</div>' : ""; };
+  const kv = pairs => { const p = pairs.filter(x => x[1] !== "" && x[1] !== undefined && x[1] !== null); return p.length ? '<div class="card kv">' + p.map(x => '<div class="k">' + esc(x[0]) + '</div><div>' + (x[2] ? x[1] : esc(x[1])) + '</div>').join("") + '</div>' : ""; };
 
   function viewPet(pid, tab) {
     const p = pet(pid);
@@ -291,7 +291,7 @@
     const trts = rows("logs").filter(l => l["Visit ID"] === id).map(l => trtName(l["Treatment ID"])).filter(Boolean);
     const html = '<div class="card hero"><h2>' + esc(day(v["Date"])) + '</h2><div class="meta">' + esc([v["Visit ID"], p["Name"], v["Reason"], v["Time"] ? M.fmtTime("T" + v["Time"]) : ""].filter(Boolean).join(" · ")) + '</div>' +
       (can("visits", "edit", v) ? '<div class="actions"><button class="btn" data-pt="edit-visit" data-id="' + esc(id) + '">Edit</button></div>' : "") + '</div>' +
-      kv([["Vet", place ? place["Name"] : ""], ["Phone", place ? place["Phone"] : ""], ["Cost", v["Cost"] !== "" ? M.money(v["Cost"]) : ""], ["Treatments given", trts.join(", ")],
+      kv([["Vet", place ? place["Name"] : ""], ["Phone", place && place["Phone"] ? M.phoneLink(place["Phone"]) : "", true], ["Cost", v["Cost"] !== "" ? M.money(v["Cost"]) : ""], ["Treatments given", trts.join(", ")],
         ["Follow-up", v["Follow Up"] || v["Follow Up Date"] ? [v["Follow Up"], v["Follow Up Date"] ? "by " + day(v["Follow Up Date"]) : "", v["Follow Up Done"] === true ? "(done)" : ""].filter(Boolean).join(" ") : ""]]) +
       (v["Records"] ? section("Records", '<div class="card vh-file">' + M.fileHtml(ctx, v["Records"], "vh-receipt") + '</div>') : "") +
       (v["Notes"] ? section("Notes", '<div class="card"><div class="vh-notes">' + esc(v["Notes"]) + '</div></div>') : "");
@@ -314,7 +314,7 @@
     switch (args[0] || "") {
       case "p": return viewPet(args[1], args[2] || "");
       case "visit": return viewVisit(args[1]);
-      case "places": return M.listView(ctx, { table: "places", title: "Places", label: r => r["Name"], sub: r => [r["Type"], r["Phone"], r["Address"]].filter(Boolean).join(" · ") });
+      case "places": return M.listView(ctx, { table: "places", title: "Places", label: r => r["Name"], subHtml: r => [esc(r["Type"] || ""), r["Phone"] ? M.phoneLink(r["Phone"]) : "", esc(r["Address"] || "")].filter(Boolean).join(" · ") });
       case "treatments": return M.listView(ctx, { table: "treatments", title: "Treatments", label: r => r["Treatment"], sub: r => [r["Kind"], r["Default Every"] ? "usually every " + r["Default Every"] + " " + String(r["Default Unit"] || "").toLowerCase() : ""].filter(Boolean).join(" · ") });
       case "lists": return viewLists();
       case "list": return M.listView(ctx, { table: "lists", list: args[1], title: args[1] });
