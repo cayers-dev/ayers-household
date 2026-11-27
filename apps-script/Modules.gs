@@ -115,6 +115,53 @@ function modTextColumn_(def, tableKey, fieldName) {
    return !!c;
 }
 
+// Phone -> digits; a US country code (+1, or a leading 1 on 11 digits) is dropped.
+function modPhoneDigits_(v) {
+   const raw = String(v).trim();
+   let d = raw.replace(/\D/g, "");
+   if (/^\+?1[\s\-.(]/.test(raw) || /^\+1/.test(raw) || (d.length === 11 && d[0] === "1")) d = d.slice(1);
+   return d;
+}
+
+// One-time tidy (run from the script editor): every phone field in every active module becomes
+// digits only (a leading 1 on an 11-digit number dropped) and its column plain text. Values with
+// fewer than 7 digits are left as they are. Writes one Change Log line per module.
+function fixPhoneNumbers() {
+   const out = [], admin = coreGetUsers_(true).find(u => u.id === "USR-1") || coreGetUsers_(true).find(u => u.admin);
+   const defs = modDefs_();
+   coreModules_().filter(m => defs[m.key] && m.spreadsheetId).forEach(m => {
+      const def = defs[m.key];
+      let n = 0;
+      Object.keys(def.tables).forEach(k => {
+         const t = def.tables[k];
+         t.fields.filter(f => f.type === "phone").forEach(f => {
+            const sheet = modSheet_(def, t);
+            const head = sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getValues()[0].map(h => String(h).trim());
+            const c = head.indexOf(f.name) + 1, last = sheet.getLastRow();
+            if (!c) return;
+            sheet.getRange(2, c, sheet.getMaxRows() - 1, 1).setNumberFormat("@");
+            if (last < 2) return;
+            const rng = sheet.getRange(2, c, last - 1, 1), vals = rng.getValues();
+            let changed = 0;
+            const fixed = vals.map(r => {
+               const v = r[0];
+               if (v === "" || v === null) return [v];
+               const d = modPhoneDigits_(v);
+               if (d.length < 7 || d === String(v)) return [typeof v === "number" ? String(v) : v];
+               changed++; return [d];
+            });
+            rng.setValues(fixed);
+            delete CORE_GRID[coreGridKey_(sheet)];
+            n += changed;
+         });
+      });
+      if (n) { coreLog_(admin, m.key, "Edit", "Phone numbers", "All", n + " phone numbers changed to digits only", true); out.push(m.key + ": " + n); }
+   });
+   coreFlushLog_();
+   console.log("Phone numbers changed to digits only | " + (out.join(" | ") || "none needed"));
+   return out.join(" | ") || "none needed";
+}
+
 // Cell value -> app value for a field type.
 function modOut_(v, type, tz) {
    if (v === null || v === undefined) return "";
@@ -235,8 +282,7 @@ function modClean_(def, t, raw, user, before) {
          if (!coreGetUsers_().some(u => u.id === v)) throw coreError_("INVALID", (f.label || f.name) + ": unknown person.");
       } else if (v !== "" && f.type === "phone") {
          // Digits only; a leading 1 on an 11-digit US number is dropped. Shown as (###) ###-#### in the app.
-         let d = String(v).replace(/\D/g, "");
-         if (d.length === 11 && d[0] === "1") d = d.slice(1);
+         const d = modPhoneDigits_(v);
          if (d.length < 7) throw coreError_("INVALID", (f.label || f.name) + " needs at least 7 digits.");
          if (d.length > 15) throw coreError_("INVALID", (f.label || f.name) + " is too long.");
          v = d;

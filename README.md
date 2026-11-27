@@ -56,3 +56,4 @@ Requirements and decisions: the "Household App Set Up - with Follow-Up Questions
 
 - Export reports (Financial month grid and others) to a file.
 - Inventory: receipt lines ticked "Add to Inventory" go there once Inventory is built.
+- Push notifications (future enhancement review): Firebase Cloud Messaging push for chosen tasks, scheduled per task, to the assigned person's devices (iPhone needs iOS 16.4+ with the app on the Home Screen).

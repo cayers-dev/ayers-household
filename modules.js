@@ -24,7 +24,7 @@
     const h = +m[1]; return ((h % 12) || 12) + ":" + m[2] + (h < 12 ? " AM" : " PM");
   }
   // Phone: stored as digits; shown (###) ###-####, extra digits as an extension; tap to call.
-  function phoneDigits(v) { let d = String(v || "").replace(/\D/g, ""); if (d.length === 11 && d[0] === "1") d = d.slice(1); return d; }
+  function phoneDigits(v) { const raw = String(v || "").trim(); let d = raw.replace(/\D/g, ""); if (/^\+?1[\s\-.(]/.test(raw) || /^\+1/.test(raw) || (d.length === 11 && d[0] === "1")) d = d.slice(1); return d; }
   function phone(v) {
     const d = phoneDigits(v);
     if (d.length < 10) return String(v || "");
@@ -365,6 +365,7 @@
   // Record form (add / edit / delete) for any table
   // ------------------------------------------------------------------
   // opts: { prefill, title, onCreated(id, values), onSaved(), lockList, hide: [field names], extraBody }
+  const TODAY_FIELDS = ["Date", "Date Submitted", "Paid Date", "Last Given", "Purchase Date", "Balance Date", "Battery Install Date", "Start Date", "When"];
   function recordForm(ctx, table, id, opts) {
     opts = opts || {};
     const t = ctx.schema(table);
@@ -372,6 +373,13 @@
     if (id && !row) { toast("That entry no longer exists.", true); return; }
     const values = Object.assign({}, ctx.defaults ? ctx.defaults(table) : {}, opts.prefill || {}, row || {});
     t.fields.forEach(f => { if (values[f.name] === undefined && f.default !== undefined && !row) values[f.name] = f.default; });
+    // New entries: dates for when something happened start on today (change as needed). Future and
+    // optional dates (end, due, follow-up, expires, birth, sold…) stay blank. Editing never changes dates.
+    if (!row) t.fields.forEach(f => {
+      if ((values[f.name] !== undefined && values[f.name] !== "") || TODAY_FIELDS.indexOf(f.name) === -1) return;
+      if (f.type === "date") values[f.name] = isoDay(new Date());
+      if (f.type === "datetime") { const d = new Date(); values[f.name] = isoDay(d) + "T" + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
+    });
     const editable = row ? tableCan(ctx, table, "edit", row) : tableCan(ctx, table, "add", null, values);
     const canDel = row && tableCan(ctx, table, "delete", row);
     const admin = C.isAdmin();
