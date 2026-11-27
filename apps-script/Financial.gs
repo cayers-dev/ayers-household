@@ -28,6 +28,7 @@ const FIN_FOLDERS = {
    entries: { id: "1agapalEILSsj3qHxRY7Ht5WpjU5C5bgH", label: "Statement" }
 };
 const FIN_AREAS = ["bills", "income", "loans", "accounts", "plans", "reports"];
+const FIN_LOOKUP_AREA = "lookup";   // a switch, not a data area (see finCanLookup_)
 const FIN_FREQ = ["Weekly", "Every 2 weeks", "Twice a month", "Monthly", "Last weekday of the month", "Every 2 months", "Quarterly", "Every 6 months", "Annually", "Every N months", "One-time"];
 const FIN_AHEAD_MONTHS = 3;
 const FIN_SYNC_SECONDS = 600;
@@ -833,10 +834,38 @@ function finSetDays_(req, user) {
    return { days: d };
 }
 
+// Number lookup: admins, and people an admin switched it on for (Financial ▸ Number lookup = On).
+// Never inherited from the Financial role. The lookup runs in the app on the person's device:
+// the typed number is never sent to the server, saved or written to the Change Log.
+function finCanLookup_(user) {
+   if (user.admin) return true;
+   return coreGetPerms_().some(p => p.userId === user.id && p.module === "financial" && p.area === FIN_LOOKUP_AREA && p.role !== "No Access");
+}
+// Every card and account by its last 4, with who and where (no balances, limits or notes).
+function finLookupIndex_(def) {
+   const users = {}; coreGetUsers_(true).forEach(u => users[u.id] = u.name);
+   const inst = {}; modRows_(def, "institutions").forEach(i => inst[i["Institution ID"]] = i["Name"]);
+   const accts = {}; modRows_(def, "accounts").forEach(a => accts[a["Account ID"]] = a);
+   const names = ids => String(ids || "").split(",").map(x => x.trim()).filter(Boolean).map(id => users[id] || id);
+   const out = [];
+   modRows_(def, "cards").forEach(c => {
+      const a = accts[c["Account ID"]] || {};
+      if (String(c["Last 4"] || "").trim()) out.push({ kind: "Card", id: c["Card ID"], last4: String(c["Last 4"]).trim(), network: c["Network"] || "", type: c["Card Type"] || "", status: c["Status"] || "",
+         active: c["Active"] !== false && a["Active"] !== false, institution: inst[a["Institution ID"]] || "", account: a["Nickname"] || "", accountId: a["Account ID"] || "", people: names(c["Cardholder"]) });
+   });
+   Object.keys(accts).forEach(k => {
+      const a = accts[k];
+      if (String(a["Account Last 4"] || "").trim()) out.push({ kind: "Account", id: a["Account ID"], last4: String(a["Account Last 4"]).trim(), network: "", type: a["Kind"] || "", status: "",
+         active: a["Active"] !== false, institution: inst[a["Institution ID"]] || "", account: a["Nickname"] || "", accountId: a["Account ID"], people: names(a["Owners"]) });
+   });
+   return out;
+}
+
 function finLoad_(req, user) {
    const def = financialDef_();
    const see = a => coreCan_(user, "financial", a, "view");
-   if (!FIN_AREAS.some(see)) throw coreError_("FORBIDDEN", "You don't have access to Financial.");
+   const canLookup = finCanLookup_(user);
+   if (!FIN_AREAS.some(see) && !canLookup) throw coreError_("FORBIDDEN", "You don't have access to Financial.");
    modPrefetch_(def);
    if (!req.reload && (see("bills") || see("income"))) finMaybeSync_(def, user);
    const today = vehToday_();
@@ -845,7 +874,8 @@ function finLoad_(req, user) {
       users: coreGetUsers_().map(u => ({ id: u.id, name: u.name })),
       lists: modRows_(def, "lists"),
       bills: [], entries: [], income: [], deposits: [], accounts: [], institutions: [], cards: [], loans: [], loanpays: [], loanStatus: {},
-      plans: [], options: [], optlines: [], planStatus: {}, report: null, vehicles: [], hockey: null
+      plans: [], options: [], optlines: [], planStatus: {}, report: null, vehicles: [], hockey: null,
+      lookup: canLookup ? finLookupIndex_(def) : null
    };
    if (see("bills")) { out.bills = modRows_(def, "bills"); out.entries = modRows_(def, "entries"); }
    if (see("income")) { out.income = modRows_(def, "income"); out.deposits = modRows_(def, "deposits"); }
@@ -1119,6 +1149,10 @@ function financialSetup() {
    if (!arows.some(r => r["Module Key"] === "financial" && r["Area Key"] === "reports")) {
       coreAppendRow_(areas, { "Module Key": "financial", "Area Key": "reports", "Area Name": "Reports", "Sort": 60, "Description": "Month grid and spending from other modules" });
       out.push("Area added: Reports");
+   }
+   if (!arows.some(r => r["Module Key"] === "financial" && r["Area Key"] === FIN_LOOKUP_AREA)) {
+      coreAppendRow_(areas, { "Module Key": "financial", "Area Key": FIN_LOOKUP_AREA, "Area Name": "Number lookup", "Sort": 70, "Description": "Look up a card or account number: shows the institution, person and last 4. Off unless switched on here; admins always have it." });
+      out.push("Area added: Number lookup");
    }
    CORE_GRID = {};
    // Tasks: a Financial category for bill reminders.

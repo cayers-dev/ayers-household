@@ -43,7 +43,7 @@ Front-end files: `app.js` (core), `modules.js` (shared module screens: forms, li
 | vehicles | Vehicles | Active (spreadsheet "Ayers Household - Vehicles") |
 | hockey | Travel Hockey | Active (spreadsheet "Ayers Household - Travel Hockey") |
 | inventory | Inventory | Coming soon |
-| financial | Financial | Active (spreadsheet "Ayers Household - Financial"); not shared with anyone |
+| financial | Financial | Active (spreadsheet "Ayers Household - Financial"); not shared with anyone. Number lookup (card / account number → institution, person, last 4) for admins and people switched on in Permissions; runs on the device, nothing sent or logged |
 | tasks | Tasks | Active (spreadsheet "Ayers Household - Tasks"); with Google Tasks sync |
 | work | Work | Active (spreadsheet "Ayers Household - Work"); comp / OT is Chris only until opened to others in Permissions |
 | home | Home Maintenance & Projects | Coming soon |

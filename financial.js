@@ -12,6 +12,7 @@
 
   const fin = { data: null, loading: false, error: "", days: null, allHistory: {}, report: null, reportYear: null, reportLoading: false, openRows: {}, method: {} };
   const IC = {
+    search: svg('<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>'),
     bill: svg('<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>'),
     income: svg('<path d="M12 4v12M7 11l5 5 5-5"/><path d="M5 20h14"/>'),
     loan: svg('<path d="M3 10l9-6 9 6"/><path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 20h18"/>'),
@@ -276,6 +277,51 @@
     return { income: sum(rows("deposits")), bills: sum(rows("entries")) };
   }
 
+  // ------------------------------------------------------------------
+  // Number lookup (admins + people switched on): matched here on the device by the last 4 digits.
+  // What's typed is never sent, saved or logged; results show the stored last 4, not the typed digits.
+  // ------------------------------------------------------------------
+  const lookupOn = () => Array.isArray(D().lookup);
+  function cardNetwork(d) {
+    if (d.length < 13) return "";
+    if (/^4/.test(d)) return "Visa";
+    if (/^(5[1-5]|2(2[2-9]|[3-6]\d|7[01]|720))/.test(d)) return "Mastercard";
+    if (/^3[47]/.test(d)) return "American Express";
+    if (/^(6011|65|64[4-9])/.test(d)) return "Discover";
+    return "";
+  }
+  function luhnOk(d) {
+    let sum = 0, alt = false;
+    for (let i = d.length - 1; i >= 0; i--) { let n = +d[i]; if (alt) { n *= 2; if (n > 9) n -= 9; } sum += n; alt = !alt; }
+    return sum % 10 === 0;
+  }
+  const netKey = n => String(n || "").toLowerCase().replace(/american express/, "amex").replace(/[^a-z]/g, "");
+  function lookupResults(raw) {
+    const d = String(raw || "").replace(/\D/g, "");
+    if (d.length < 4) return '<p class="hint fin-lk-note">Type or paste the number (at least the last 4 digits). It stays on this device: it isn’t sent, saved or logged.</p>';
+    const last4 = d.slice(-4), net = cardNetwork(d);
+    const hits = D().lookup.filter(x => x.last4 === last4).map(x => Object.assign({ off: !!(net && x.kind === "Card" && x.network && netKey(x.network) !== netKey(net)) }, x))
+      .sort((a, b) => (a.off - b.off) || ((b.active !== false) - (a.active !== false)) || (a.kind === "Card" ? -1 : 1));
+    const warn = net && d.length >= 13 && !luhnOk(d) ? '<p class="hint fin-lk-warn">That doesn’t look like a valid card number (check digit) — a digit may be mistyped. Matching on the last 4 anyway.</p>' : "";
+    if (!hits.length) return warn + '<div class="card"><div class="empty">No card or account on file ends in those digits.</div></div>';
+    return warn + '<div class="card list fin-lk-list">' + hits.map(x => '<div class="list-item' + (x.off || x.active === false || x.status === "Closed" ? " dim" : "") + '"><span class="thumb">' + (x.kind === "Card" ? IC.account : IC.loan) + '</span><div class="body">' +
+      '<div class="title">' + esc(x.institution || "(no institution)") + '</div>' +
+      '<div class="sub">' + esc([x.kind === "Card" ? [x.network, x.type, "card"].filter(Boolean).join(" ") : (x.type || "Account"), x.account].filter(Boolean).join(" · ")) + '</div>' +
+      '<div class="sub fin-lk-who">' + esc(x.people.join(", ") || "No person set") + (x.status && x.status !== "Active" ? " · " + esc(x.status) : x.active === false ? " · turned off" : "") + '</div>' +
+      (x.off ? '<div class="sub fin-lk-warn">Typed number looks like ' + esc(net) + '; this card is ' + esc(x.network) + '.</div>' : "") + '</div>' +
+      '<div class="fin-lk-last4">••' + esc(x.last4) + '</div></div>').join("") + '</div>' +
+      (hits.length > 1 ? '<p class="hint">' + esc(hits.length + " match the last 4 — confirm by institution and person.") + '</p>' : "");
+  }
+  const lookupBox = big => (fin.lkHash !== location.hash ? (fin.lk = "") : "") + '<div class="fin-lookup' + (big ? " big" : "") + '"><div class="fin-lk-field">' + IC.search +
+    '<input type="text" inputmode="numeric" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-fin-lookup aria-label="Card or account number" placeholder="Look up a card or account number" value="' + esc(fin.lk || "") + '">' +
+    '<button type="button" class="icon-btn" data-fin="lk-clear" aria-label="Clear"' + (fin.lk ? "" : " hidden") + '>' + ICONS.close + '</button></div>' +
+    '<div class="fin-lk-out">' + (big || fin.lk ? lookupResults(fin.lk || "") : "") + '</div></div>';
+  // What's typed is kept in memory only while on this screen (so a refresh doesn't wipe it); leaving clears it.
+  function viewLookup() {
+    if (!lookupOn()) return { title: "Number lookup", back: true, html: '<div class="card"><div class="empty">Number lookup isn’t switched on for you. Ask Chris.</div></div>' };
+    return { title: "Number lookup", back: true, html: lookupBox(true) };
+  }
+
   function viewHome() {
     const t = today(), days = fin.days || D().days, until = addDays(t, days);
     const ym = t.slice(0, 7), tot = monthTotals(ym);
@@ -316,7 +362,7 @@
       see("reports") ? tile("#/financial/report", IC.report, "Reports", "Month by month") : ""
     ].join("");
     const lists = can("lists", "add", null, { "List": "Category" }) ? section("Lists & settings", '<div class="card list"><a class="list-item" href="#/financial/lists"><span class="thumb">' + IC.tag + '</span><div class="body"><div class="title">Dropdown lists</div><div class="sub">Groups, categories, people</div></div><span class="thumb">' + ICONS.next + '</span></a></div>') : "";
-    const html = hero + (see("bills") || see("income") ? win : "") + body + (tiles ? '<div class="home-grid fin-tiles">' + tiles + '</div>' : "") + lists +
+    const html = (lookupOn() ? lookupBox(false) : "") + hero + (see("bills") || see("income") ? win : "") + body + (tiles ? '<div class="home-grid fin-tiles">' + tiles + '</div>' : "") + lists +
       (C.isAdmin() ? '<p class="hint"><a href="#/financial/deleted">Deleted items</a></p>' : "");
     return { title: "Financial", back: true, html: html };
   }
@@ -472,7 +518,7 @@
         return '<div class="card list fin-inst' + (act(i) ? "" : " dim") + '">' + head + (accts.map(acctRow).join("") || '<div class="empty">No accounts yet.</div>') + '</div>';
       }).join("") || '<div class="card"><div class="empty">No institutions yet. Add a bank, credit union or card issuer first, then its accounts.</div></div>') +
       '<p class="hint">Only the last 4 digits of card and account numbers are kept. No full numbers, passwords or expiration dates.</p>';
-    return { title: "Accounts", back: true, html: html };
+    return { title: "Accounts", back: true, html: (lookupOn() ? lookupBox(false) : "") + html };
   }
 
   function viewPlans() {
@@ -682,6 +728,7 @@
       case "loans": return viewLoans();
       case "loan": return viewLoan(args[1]);
       case "accounts": return viewAccounts();
+      case "lookup": return viewLookup();
       case "plans": return viewPlans();
       case "plan": return viewPlan(args[1]);
       case "report": return viewReport();
@@ -704,6 +751,11 @@
     const d = el.dataset;
     switch (d.fin) {
       case "retry": fin.error = ""; C.render(); break;
+      case "lk-clear": {
+        const box = el.closest(".fin-lookup"), i = box.querySelector("[data-fin-lookup]");
+        i.value = ""; fin.lk = ""; el.hidden = true; box.querySelector(".fin-lk-out").innerHTML = box.classList.contains("big") ? lookupResults("") : ""; i.focus();
+        break;
+      }
       case "mark": mark(d.table, d.id, d.to); break;
       case "all-history": fin.allHistory[d.id] = true; C.render(); break;
       case "add-entry": {
@@ -732,6 +784,14 @@
     if (e.key !== "Enter" && e.key !== " ") return;
     const el = e.target.closest && e.target.closest("[data-fin='edit-option']");
     if (el) { e.preventDefault(); el.click(); }
+  });
+  document.addEventListener("input", e => {
+    const i = e.target.closest && e.target.closest("[data-fin-lookup]");
+    if (!i || !fin.data) return;
+    const box = i.closest(".fin-lookup"), digits = i.value.replace(/\D/g, "");
+    fin.lk = i.value; fin.lkHash = location.hash;
+    box.querySelector('[data-fin="lk-clear"]').hidden = !i.value;
+    box.querySelector(".fin-lk-out").innerHTML = digits.length || box.classList.contains("big") ? lookupResults(i.value) : "";
   });
   document.addEventListener("change", e => {
     const t = e.target;

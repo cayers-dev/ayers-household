@@ -9,7 +9,7 @@
   const CFG = window.HH_CONFIG || {};
   const TOKEN_KEY = "hh_id_token";     // Google sign-in pass (only until the server gives a session)
   const SESSION_KEY = "hh_session";    // the app's own session: { token, exp }
-  const APP_VERSION = "30";
+  const APP_VERSION = "31";
 
   const state = {
     token: null, session: null, sessionExp: 0,
@@ -647,6 +647,8 @@
     };
   }
 
+  // Areas that are an on / off switch rather than a role (never inherited from the module's role).
+  const SWITCH_AREAS = { "financial/lookup": "Look up card and account numbers. Admins always have it." };
   function viewPermsUser(userId) {
     const A = state.admin;
     const u = A.users.find(x => x.id === userId);
@@ -672,9 +674,11 @@
             (open ? "Hide areas" : "Set areas separately") + (overrides ? " (" + overrides + " set)" : "") + '</button>' +
           (open ? '<div class="perm-areas">' + areas.map(a => {
             const cur = picks[permKey(m.key, a.key)] || "";
-            return '<div class="perm-row"><label class="perm-label" for="p_' + esc(m.key + "_" + a.key) + '">' + esc(a.name) + '</label>' +
+            const sw = SWITCH_AREAS[m.key + "/" + a.key];
+            return '<div class="perm-row"><label class="perm-label" for="p_' + esc(m.key + "_" + a.key) + '">' + esc(a.name) + (sw ? '<span class="hint">' + esc(sw) + '</span>' : "") + '</label>' +
               '<select id="p_' + esc(m.key + "_" + a.key) + '" data-act="perm-pick" data-module="' + esc(m.key) + '" data-area="' + esc(a.key) + '">' +
-              opt("", "Same: " + modRole, cur) + state.roles.map(r => opt(r, r, cur)).join("") + '</select></div>';
+              (sw ? opt("", "Off", cur && cur !== "No Access" ? "Editor" : "") + opt("Editor", "On", cur && cur !== "No Access" ? "Editor" : "")
+                : opt("", "Same: " + modRole, cur) + state.roles.map(r => opt(r, r, cur)).join("")) + '</select></div>';
           }).join("") + '</div>' : "") : "") +
         '</div>';
     }).join("");
