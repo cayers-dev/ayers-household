@@ -47,7 +47,7 @@ function financialDef_() {
       { name: "Every N Months", type: "number", hint: "Only for “Every N months”" },
       { name: "Start Date", label: "First " + noun + " Date", type: "date", required: true, hint: "Sets the day it's " + word + " each time (e.g. the 15th)." },
       { name: "Second Day", label: "Second " + noun + " Day", type: "number", hint: "Only for “Twice a month”, e.g. 15" },
-      { name: "End Date", label: "Last " + noun + " Date", type: "date", hint: "Blank = keeps going" }
+      { name: "End Date", label: word === "received" ? "Ends after (final payment)" : "Last " + noun + " Date", type: "date", hint: "Blank = keeps going" }
    ];
    const entryFields = (ref, refLabel, statuses, dateLabel, paidLabel) => [
       { name: ref, label: refLabel, type: "ref", ref: ref === "Bill ID" ? "bills" : "income", required: true },
@@ -73,6 +73,7 @@ function financialDef_() {
                { name: "Account ID", label: "Paid From", type: "ref", ref: "accounts" },
                { name: "Card ID", label: "Card", type: "ref", ref: "cards", hint: "Optional: which card on that account" },
                { name: "Loan ID", label: "Loan", type: "ref", ref: "loans", readOnly: true, hint: "Set by the loan: this is its payment bill" },
+               { name: "Pays Account ID", label: "Pays account", type: "ref", ref: "accounts", readOnly: true, hint: "Set by the account: this is its payment bill" },
                { name: "Plan ID", label: "Saving Toward", type: "ref", ref: "plans", hint: "Payments add to this goal's saved amount" },
                { name: "Reminder", label: "Reminder task", type: "bool", hint: "A task for each payment (Tasks)" },
                { name: "Reminder To", type: "users", default: "USR-1", hint: "Each person gets a task; ticking any one marks the bill paid" },
@@ -86,6 +87,7 @@ function financialDef_() {
             ].concat(scheduleFields("received", "Received")).concat([
                { name: "Autopay", label: "Received automatically", type: "bool", hint: "Direct deposit: marks itself received on the date" },
                { name: "Account ID", label: "Deposited To", type: "ref", ref: "accounts" },
+               { name: "Next Month", label: "Counts toward next month", type: "bool", hint: "A payment in the last days of a month counts in the next month's summary and reports (pays next month's bills)" },
                { name: "Notes", type: "longtext" }
             ]) },
          entries: { tab: "Bill Entries", label: "Bill Entries", id: "Entry ID", prefix: "PAY-", kind: "record", area: "bills",
@@ -158,6 +160,11 @@ function financialDef_() {
                { name: "APR", label: "APR %", type: "percent" },
                { name: "Balance", type: "money", hint: "Optional, typed in by hand" },
                { name: "Balance Date", label: "Balance as of", type: "date" },
+               { name: "Payment Bill", label: "Payment bill", type: "bool", hint: "A monthly bill that pays this account (credit card, loan…), due on the Payment Due Day" },
+               { name: "Bill ID", label: "Use an existing bill", type: "ref", ref: "bills", hint: "Optional: link a bill you already have instead of making a new one" },
+               { name: "Payment Amount", type: "money", hint: "Default amount each month" },
+               { name: "Payment Paid From", type: "ref", ref: "accounts" },
+               { name: "Payment Autopay", label: "Autopay", type: "bool" },
                { name: "Notes", type: "longtext", hint: "No full account numbers or passwords" }
             ] },
          cards: { tab: "Cards", label: "Cards", id: "Card ID", prefix: "CRD-", kind: "list", area: "accounts",
@@ -225,6 +232,7 @@ function financialDef_() {
          mark:        { fn: finMark_, write: true },
          setDays:     { fn: finSetDays_, write: true },
          setPaidFrom: { fn: finSetPaidFrom_, write: true },
+         setNextMonth: { fn: finSetNextMonth_, write: true },
          upload:      { fn: finUpload_, write: true },
          clearFile:   { fn: finClearFile_, write: true },
          saveOption:  { fn: finSaveOption_, write: true },
@@ -513,7 +521,7 @@ function finBeforeSave_(tableKey, values, before, user, req) {
          if (!(d2 >= 1 && d2 <= 31 && d2 === Math.round(d2))) throw coreError_("INVALID", "Twice a month: enter the second " + word + " day (1–31).");
          if (d2 === d1) throw coreError_("INVALID", "The second " + word + " day is the same as the first one's day.");
       } else if ("Second Day" in values) values["Second Day"] = "";
-      if (merged["End Date"] && merged["Start Date"] && finIso_(merged["End Date"]) < finIso_(merged["Start Date"])) throw coreError_("INVALID", "The last " + word + " date is before the first " + word + " date.");
+      if (merged["End Date"] && merged["Start Date"] && finIso_(merged["End Date"]) < finIso_(merged["Start Date"])) throw coreError_("INVALID", tableKey === "income" ? "The final payment date is before the first received date." : "The last due date is before the first due date.");
       if (tableKey === "bills" && "Reminder Days" in values && values["Reminder Days"] !== "") {
          const d = Number(values["Reminder Days"]);
          if (!(d >= 0 && d <= 60 && d === Math.round(d))) throw coreError_("INVALID", "Days before due must be a whole number from 0 to 60.");
@@ -543,7 +551,27 @@ function finBeforeSave_(tableKey, values, before, user, req) {
    const dayOfMonth = n => { if (n in values && values[n] !== "") { const d = Number(values[n]); if (!(d >= 1 && d <= 31 && d === Math.round(d))) throw coreError_("INVALID", n + " must be a day of the month (1–31)."); } };
    // Accounts: the last 4 with an optional suffix to tell them apart (1234 S:00, 1234 C:01).
    if (tableKey === "accounts" && "Account Last 4" in values && String(values["Account Last 4"]).length > 30) throw coreError_("INVALID", "Account – last 4 is too long (30 characters at most).");
-   if (tableKey === "accounts") { dayOfMonth("Statement Day"); dayOfMonth("Payment Due Day"); }
+   if (tableKey === "accounts") {
+      dayOfMonth("Statement Day"); dayOfMonth("Payment Due Day");
+      // Payment bill: picking an existing bill turns it on; the bill can't belong to a loan, goal or other account.
+      if ("Bill ID" in values && values["Bill ID"] && (!before || values["Bill ID"] !== before["Bill ID"])) {
+         values["Payment Bill"] = true;
+         const b = vehFind_(def, "bills", values["Bill ID"]);
+         const owner = b && (b["Loan ID"] ? "a loan" : modRows_(def, "plans").some(p => p["Bill ID"] === b["Bill ID"]) ? "a goal" :
+            (b["Pays Account ID"] && b["Pays Account ID"] !== (before || {})["Account ID"]) ? "another account" : "");
+         if (owner) throw coreError_("INVALID", "That bill already belongs to " + owner + ".");
+         const m2 = Object.assign({}, before || {}, values);
+         if (b && (m2["Payment Amount"] === "" || m2["Payment Amount"] === undefined)) values["Payment Amount"] = b["Amount"];
+         if (b && !m2["Payment Paid From"] && b["Account ID"]) values["Payment Paid From"] = b["Account ID"];
+         if (b && !("Payment Autopay" in values) && !(before || {})["Payment Autopay"]) values["Payment Autopay"] = b["Autopay"] === true;
+         if (b && !m2["Payment Due Day"]) values["Payment Due Day"] = +finIso_(b["Start Date"]).slice(8, 10) || "";
+      }
+      const m = Object.assign({}, before || {}, values);
+      if (m["Payment Bill"] === true) {
+         if (!(Number(m["Payment Due Day"]) >= 1)) throw coreError_("INVALID", "Payment bill: enter the Payment Due Day.");
+         if (!(Number(m["Payment Amount"]) > 0)) throw coreError_("INVALID", "Payment bill: enter the payment amount.");
+      }
+   }
    if (tableKey === "cards") last4("Last 4");
    if (tableKey === "bills" && merged["Card ID"]) {
       const card = vehFind_(def, "cards", merged["Card ID"]);
@@ -585,6 +613,7 @@ function finAfterSave_(tableKey, id, values, before, user, req) {
    }
    if (tableKey === "loans") finLoanBill_(def, id, user);
    if (tableKey === "plans") finPlanBill_(def, id, user);
+   if (tableKey === "accounts" && FIN_ACCOUNT_BILL_FIELDS.some(n => n in values)) finAccountBill_(def, id, user);
 }
 
 function finAfterDelete_(tableKey, row, user) {
@@ -592,6 +621,12 @@ function finAfterDelete_(tableKey, row, user) {
    if (tableKey === "bills" || tableKey === "income") finClearUpcoming_(def, tableKey, row[FIN_KINDS[tableKey].id], user, true);
    if (tableKey === "entries" && row["Reminder Task"] && finTasksOn_()) {
       try { finRemoveReminders_(row["Entry ID"], user); } catch (e) { console.warn(e); }
+   }
+   // A deleted payment bill comes off its account (the account's payment bill is turned off).
+   if (tableKey === "bills" && row["Pays Account ID"]) {
+      const a = modRows_(def, "accounts", true).find(x => x["Account ID"] === row["Pays Account ID"] && x["Bill ID"] === row["Bill ID"]);
+      if (a) coreWriteChanges_(modSheet_(def, def.tables.accounts), a._row, a, { "Bill ID": "", "Payment Bill": false });
+      modForget_(def, "accounts");
    }
    if ((tableKey === "loans" || tableKey === "plans") && row["Bill ID"]) {
       const bill = modRows_(def, "bills").find(b => b["Bill ID"] === row["Bill ID"]);
@@ -669,6 +704,34 @@ function finLoanBill_(def, loanId, user) {
       "Start Date": coreDate_(first), "End Date": end ? coreDate_(end) : "", "Autopay": loan["Autopay"] === true,
       "Account ID": loan["Account ID"] || "", "Loan ID": loanId
    }, user);
+}
+// An account's payment bill (credit card, loan…): monthly on the Payment Due Day, for the payment
+// amount, paid from the chosen account. Turning it off unlinks the bill (it isn't deleted).
+const FIN_ACCOUNT_BILL_FIELDS = ["Payment Bill", "Bill ID", "Payment Amount", "Payment Paid From", "Payment Autopay", "Payment Due Day", "Nickname"];
+function finAccountBill_(def, accountId, user) {
+   modForget_(def, "accounts");
+   const a = modRows_(def, "accounts").find(x => x["Account ID"] === accountId);
+   if (!a) return;
+   const bill = a["Bill ID"] ? modRows_(def, "bills").find(b => b["Bill ID"] === a["Bill ID"]) : null;
+   if (a["Payment Bill"] !== true) {
+      if (bill && bill["Pays Account ID"] === accountId) modChange_(def, "bills", bill, { "Pays Account ID": "" }, user, "Unlinked from " + accountId);
+      if (a["Bill ID"]) coreWriteChanges_(modSheet_(def, def.tables.accounts), a._row, a, { "Bill ID": "" });
+      modForget_(def, "accounts");
+      return;
+   }
+   const day = Math.round(Number(a["Payment Due Day"]));
+   const onDay = (y, m) => { const last = new Date(y, m, 0).getDate(); return y + "-" + String(m).padStart(2, "0") + "-" + String(Math.min(day, last)).padStart(2, "0"); };
+   let start = bill ? finIso_(bill["Start Date"]) : "";
+   if (!start || +start.slice(8, 10) !== day) {
+      const t = vehToday_(); let y = +t.slice(0, 4), m = +t.slice(5, 7);
+      start = onDay(y, m);
+      if (start < t) { m++; if (m > 12) { m = 1; y++; } start = onDay(y, m); }
+   }
+   const values = { "Amount": finRound_(a["Payment Amount"]), "Frequency": "Monthly", "Start Date": coreDate_(start), "Autopay": a["Payment Autopay"] === true,
+      "Account ID": a["Payment Paid From"] || "", "Pays Account ID": accountId };
+   if (bill && bill["Card ID"]) { const card = vehFind_(def, "cards", bill["Card ID"]); if (!card || card["Account ID"] !== values["Account ID"]) values["Card ID"] = ""; }
+   if (!bill) Object.assign(values, { "Name": a["Nickname"] + " payment", "Group": "Expenses", "Category": a["Kind"] === "Credit Card" ? "Credit Card" : a["Kind"] === "Loan" ? "Loan" : "" });
+   finUpsertOwnedBill_(def, "accounts", a, values, user);
 }
 // A goal with an automatic transfer has its own savings bill (on autopay), so each transfer adds to Saved to date.
 function finPlanBill_(def, planId, user) {
@@ -777,16 +840,20 @@ function finReport_(def, year) {
       const last = {};
       allEntries.forEach(e => { const d = finIso_(e["Scheduled For"]) || finIso_(e["Due Date"]); if (!last[e[K.id]] || d > last[e[K.id]]) last[e[K.id]] = d; });
       const items = modRows_(def, K.items, true);
+      const nDays = finNextMonthDays_();
       return items.map(it => {
          const cells = zeros(), proj = zeros().map(() => false);
-         allEntries.filter(e => e[K.id] === it[K.id] && !e["Deleted"] && e["Status"] !== "Skipped" && String(e["Due Date"]).slice(0, 4) === String(year))
-            .forEach(e => { cells[+String(e["Due Date"]).slice(5, 7) - 1] += Number(e["Amount"]) || 0; });
+         // Income that counts toward next month: late-month payments move to the next month (December's into January).
+         const shift = kind === "income" && it["Next Month"] === true;
+         const inYear = ym => ym.slice(0, 4) === String(year);
+         allEntries.filter(e => e[K.id] === it[K.id] && !e["Deleted"] && e["Status"] !== "Skipped" && finIso_(e["Due Date"]) && inYear(finCountMonth_(finIso_(e["Due Date"]), shift, nDays)))
+            .forEach(e => { cells[+finCountMonth_(finIso_(e["Due Date"]), shift, nDays).slice(5, 7) - 1] += Number(e["Amount"]) || 0; });
          if (!it["Deleted"]) {
             const track = finTrackFrom_(it);
-            let from = year + "-01-01";
+            let from = shift ? (year - 1) + "-12-01" : year + "-01-01";
             if (track > from) from = track;
             if (last[it[K.id]] && vehAddDays_(last[it[K.id]], 1) > from) from = vehAddDays_(last[it[K.id]], 1);
-            finOccurrences_(it, from, year + "-12-31").forEach(d => { const m = +d.slice(5, 7) - 1; cells[m] += Number(it["Amount"]) || 0; proj[m] = true; });
+            finOccurrences_(it, from, year + "-12-31").forEach(d => { const cm = finCountMonth_(d, shift, nDays); if (!inYear(cm)) return; const m = +cm.slice(5, 7) - 1; cells[m] += Number(it["Amount"]) || 0; proj[m] = true; });
          }
          return { id: it[K.id], name: it["Name"], group: kind === "income" ? "Income" : (it["Group"] || "Expenses"), cells: cells.map(finRound_), proj: proj, total: sum(cells) };
       }).filter(r => r.cells.some(c => c !== 0));
@@ -872,6 +939,22 @@ function finPaidFromKinds_() {
    try { const v = JSON.parse(PropertiesService.getScriptProperties().getProperty("fin_paidfrom_kinds") || "null"); if (Array.isArray(v)) return v; } catch (e) { }
    return FIN_PAIDFROM_DEFAULT.slice();
 }
+// Income marked "Counts toward next month": a payment in the last N days of a month (admins set N,
+// default 7) counts in the next month. Returns the month ("yyyy-MM") a date counts in.
+function finNextMonthDays_() { const n = Number(PropertiesService.getScriptProperties().getProperty("fin_nextmonth_days")); return n >= 1 && n <= 15 ? n : 7; }
+function finCountMonth_(iso, shift, days) {
+   const y = +iso.slice(0, 4), m = +iso.slice(5, 7), d = +iso.slice(8, 10);
+   if (!shift || d <= new Date(y, m, 0).getDate() - days) return iso.slice(0, 7);
+   return m === 12 ? (y + 1) + "-01" : y + "-" + String(m + 1).padStart(2, "0");
+}
+function finSetNextMonth_(req, user) {
+   coreRequireAdmin_(user);
+   const n = Math.round(Number(req.days));
+   if (!(n >= 1 && n <= 15)) throw coreError_("INVALID", "Pick 1 to 15 days.");
+   PropertiesService.getScriptProperties().setProperty("fin_nextmonth_days", String(n));
+   coreLog_(user, "financial", "Settings", "Income", "Counts toward next month", "Last " + n + " days of the month");
+   return { days: n };
+}
 function finSetPaidFrom_(req, user) {
    coreRequireAdmin_(user);
    const kinds = financialDef_().tables.accounts.fields.find(f => f.name === "Kind").options;
@@ -897,7 +980,8 @@ function finLoad_(req, user) {
       bills: [], entries: [], income: [], deposits: [], accounts: [], institutions: [], cards: [], loans: [], loanpays: [], loanStatus: {},
       plans: [], options: [], optlines: [], planStatus: {}, report: null, vehicles: [], hockey: null,
       lookup: canLookup ? finLookupIndex_(def) : null,
-      paidFromKinds: finPaidFromKinds_()
+      paidFromKinds: finPaidFromKinds_(),
+      nextMonthDays: finNextMonthDays_()
    };
    if (see("bills")) { out.bills = modRows_(def, "bills"); out.entries = modRows_(def, "entries"); }
    if (see("income")) { out.income = modRows_(def, "income"); out.deposits = modRows_(def, "deposits"); }

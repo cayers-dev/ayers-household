@@ -83,10 +83,11 @@
   // "Visa ••1234 · Chris"
   const cardLabel = c => [(c["Network"] ? c["Network"] + " " : "") + "••" + c["Last 4"], c["Cardholder"] ? M.userName(ctx, c["Cardholder"]) : ""].filter(Boolean).join(" · ");
   const instName = id => { const i = byId("institutions", id); return i ? i["Name"] : ""; };
-  const OWNED_FIELDS = ["Name", "Amount", "Frequency", "Every N Months", "Start Date", "Second Day", "End Date", "Autopay", "Account ID", "Card ID", "Loan ID", "Plan ID"];
+  const OWNED_FIELDS = ["Name", "Amount", "Frequency", "Every N Months", "Start Date", "Second Day", "End Date", "Autopay", "Account ID", "Card ID", "Loan ID", "Plan ID", "Pays Account ID"];
   // Which loan or goal a bill belongs to (its payment / automatic transfer), as a sentence.
   function ownedBy(b) {
     if (b["Loan ID"]) { const l = byId("loans", b["Loan ID"]); return "This is the payment bill for " + (l ? l["Loan ID"] + " " + l["Name"] : b["Loan ID"]) + ". Change its amount and dates on the loan."; }
+    if (b["Pays Account ID"]) { const a = byId("accounts", b["Pays Account ID"]); return "This is the payment bill for " + (a ? a["Account ID"] + " " + a["Nickname"] : b["Pays Account ID"]) + ". Change its amount, due day and Paid From on the account."; }
     const p = rows("plans").find(x => x["Bill ID"] === b["Bill ID"]);
     return p ? "This is the automatic transfer for " + p["Plan ID"] + " " + p["Goal"] + ". Change it on the goal." : "";
   }
@@ -129,9 +130,10 @@
       accounts: "account", institutions: "institution", cards: "card", plans: "goal", options: "option", lists: "list value" }[t] || "entry"),
     formOpts: t => ({ entries: { hide: ["Bill ID"] }, deposits: { hide: ["Income ID"] }, loanpays: { hide: ["Loan ID"] } }[t] || {}),
     // A bill made by a loan or a goal: its amount and schedule come from there.
-    hideField: (t, name, values, row) => t === "bills" && row && ownedBy(row) && OWNED_FIELDS.indexOf(name) !== -1,
+    hideField: (t, name, values, row) => (t === "bills" && row && ownedBy(row) && OWNED_FIELDS.indexOf(name) !== -1 && !(row["Pays Account ID"] && name === "Name")) ||
+      (t === "bills" && name === "Pays Account ID" && !(row && row["Pays Account ID"])),
     // Paid From: only the account kinds an admin picked (Financial ▸ Dropdown lists).
-    refFilter: (f, r) => !(f.ref === "accounts" && f.label === "Paid From") || !Array.isArray(D().paidFromKinds) || D().paidFromKinds.indexOf(r["Kind"]) !== -1,
+    refFilter: (f, r) => !(f.ref === "accounts" && (f.label === "Paid From" || f.name === "Payment Paid From")) || !Array.isArray(D().paidFromKinds) || D().paidFromKinds.indexOf(r["Kind"]) !== -1,
     onFormReady: (t, form, row) => {
       const fieldOf = n => { const el = form.querySelector('[name="' + n + '"]'); return el && el.closest(".field"); };
       if (t === "bills") {
@@ -150,11 +152,22 @@
         if (row && ownedBy(row)) form.querySelector(".sheet-body").insertAdjacentHTML("afterbegin", '<p class="hint fin-owned">' + esc(ownedBy(row)) + '</p>');
       }
       if (t === "accounts") {
+        // Payment bill: its fields show when it's ticked; "Use an existing bill" lists bills that don't
+        // already belong to a loan, a goal or another account.
+        const billSel = form.querySelector('select[name="Bill ID"]'), me = row ? row["Account ID"] : "";
+        if (billSel) $$("option", billSel).forEach(o => {
+          if (!o.value || o.value === "__new__") { if (o.value === "__new__") o.remove(); return; }
+          const b = byId("bills", o.value);
+          if (b && (b["Loan ID"] || rows("plans").some(p => p["Bill ID"] === b["Bill ID"]) || (b["Pays Account ID"] && b["Pays Account ID"] !== me))) o.remove();
+        });
         const sync = () => {
-          const k = (form.querySelector('[name="Kind"]') || {}).value;
+          const k = (form.querySelector('[name="Kind"]') || {}).value, pb = (form.querySelector('[name="Payment Bill"]') || {}).checked;
           ["Credit Limit"].forEach(n => { const x = fieldOf(n); if (x) x.hidden = k !== "Credit Card"; });
-          ["Statement Day", "Payment Due Day", "APR"].forEach(n => { const x = fieldOf(n); if (x) x.hidden = !(k === "Credit Card" || k === "Loan"); });
+          ["Statement Day", "APR"].forEach(n => { const x = fieldOf(n); if (x) x.hidden = !(k === "Credit Card" || k === "Loan"); });
+          const due = fieldOf("Payment Due Day"); if (due) due.hidden = !(k === "Credit Card" || k === "Loan" || pb);
+          ["Bill ID", "Payment Amount", "Payment Paid From", "Payment Autopay"].forEach(n => { const x = fieldOf(n); if (x) x.hidden = !pb; });
         };
+        if (billSel) billSel.addEventListener("change", () => { const cb = form.querySelector('[name="Payment Bill"]'); if (billSel.value && cb) cb.checked = true; sync(); });
         form.addEventListener("change", sync); sync();
       }
       if (t === "plans") {
@@ -297,9 +310,18 @@
   const tile = (href, icon, label, info) => '<a class="home-link" href="' + href + '"><span class="home-icon">' + icon + '</span><span class="home-text"><span class="home-label">' + esc(label) + '</span>' +
     (info ? '<span class="home-info">' + esc(info) + '</span>' : "") + '</span></a>';
 
+  // The month a payment counts in: income marked "Counts toward next month" moves a payment in the
+  // last N days of a month (admin setting) to the next month.
+  function countMonth(e, K) {
+    const d = String(e["Due Date"]).slice(0, 10), it = K === KINDS.income ? byId("income", e["Income ID"]) : null;
+    if (!it || it["Next Month"] !== true || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return d.slice(0, 7);
+    const y = +d.slice(0, 4), m = +d.slice(5, 7), n = Number(D().nextMonthDays) || 7;
+    if (+d.slice(8, 10) <= new Date(y, m, 0).getDate() - n) return d.slice(0, 7);
+    return m === 12 ? (y + 1) + "-01" : y + "-" + String(m + 1).padStart(2, "0");
+  }
   function monthTotals(ym) {
-    const sum = (list) => list.filter(e => String(e["Due Date"]).slice(0, 7) === ym && e["Status"] !== "Skipped").reduce((s, e) => s + (Number(e["Amount"]) || 0), 0);
-    return { income: sum(rows("deposits")), bills: sum(rows("entries")) };
+    const sum = (list, K) => list.filter(e => countMonth(e, K) === ym && e["Status"] !== "Skipped").reduce((s, e) => s + (Number(e["Amount"]) || 0), 0);
+    return { income: sum(rows("deposits"), KINDS.income), bills: sum(rows("entries"), KINDS.bills) };
   }
 
   // ------------------------------------------------------------------
@@ -557,7 +579,9 @@
       const k = "a:" + a["Account ID"];
       return '<div class="fin-acct' + (act(a) ? "" : " dim") + '"><div class="list-item"><span class="thumb">' + IC.account + '</span>' +
         '<div class="body"><div class="title" role="button" tabindex="0" data-mod-edit="accounts" data-id="' + esc(a["Account ID"]) + '">' + esc(a["Nickname"]) + '</div>' +
-        (open(k) ? '<div class="sub">' + esc(sub) + '</div>' + (a["Balance"] !== "" && a["Balance"] !== undefined ? '<div class="sub">' + esc("Balance " + money(a["Balance"]) + (a["Balance Date"] ? " as of " + day(a["Balance Date"]) : "")) + '</div>' : "") : "") +
+        (open(k) ? '<div class="sub">' + esc(sub) + '</div>' + (a["Balance"] !== "" && a["Balance"] !== undefined ? '<div class="sub">' + esc("Balance " + money(a["Balance"]) + (a["Balance Date"] ? " as of " + day(a["Balance Date"]) : "")) + '</div>' : "") +
+          (a["Payment Bill"] === true && a["Bill ID"] && byId("bills", a["Bill ID"]) ? '<div class="sub">Payment bill: <a href="#/financial/bill/' + encodeURIComponent(a["Bill ID"]) + '">' + esc(byId("bills", a["Bill ID"])["Name"]) + '</a>' +
+            esc(" · " + money(a["Payment Amount"]) + " due the " + ord(Number(a["Payment Due Day"])) + (a["Payment Autopay"] === true ? " · Autopay" : "")) + '</div>' : "") : "") +
         toggle(k, cards.length ? plural(cards.length, "Card") + " Assigned" : "No cards assigned") + '</div>' +
         (act(a) ? "" : '<span class="pill">Off</span>') +
         (can("cards", "add") ? '<button class="link-btn" data-fin="add-card" data-id="' + esc(a["Account ID"]) + '">+ Card</button>' : "") + '</div>' +
@@ -709,6 +733,20 @@
   }
 
   // Month grid for a year.
+  // Reports show whole dollars, always rounded up ($21.01 → $22); totals add up the rounded amounts so
+  // the grid adds up across and down.
+  const up = v => { const c = Math.round((Number(v) || 0) * 100) / 100; return c > 0 ? Math.ceil(c) : c < 0 ? -Math.ceil(-c) : 0; };
+  function roundReport(R) {
+    const sum = a => a.reduce((x, y) => x + y, 0);
+    const sections = R.sections.map(s => {
+      const rows2 = s.rows.map(r => { const cells = r.cells.map(up); return Object.assign({}, r, { cells: cells, total: sum(cells) }); });
+      return Object.assign({}, s, { rows: rows2, total: s.total.map((v, i) => rows2.length ? sum(rows2.map(r => r.cells[i])) : up(v)) });
+    });
+    const inc = sections.find(s => s.kind === "income"), bills = sections.filter(s => s.kind === "bills");
+    const remaining = R.remaining.map((v, i) => (inc ? inc.total[i] : 0) - sum(bills.map(b => b.total[i])));
+    const other = R.other.map(o => { const cells = o.cells.map(up); return Object.assign({}, o, { cells: cells, total: sum(cells) }); });
+    return Object.assign({}, R, { sections: sections, remaining: remaining, remainingTotal: sum(remaining), other: other });
+  }
   function viewReport() {
     const y = fin.reportYear || +today().slice(0, 4);
     let R = D().report && D().report.year === y ? D().report : (fin.report && fin.report.year === y ? fin.report : null);
@@ -720,6 +758,7 @@
       }
       return { title: "Reports", back: true, html: yearNav(y) + '<div class="card"><div class="empty"><div class="spinner"></div></div></div>' };
     }
+    R = roundReport(R);
     const cell = (v, proj) => '<td class="' + (proj ? "proj" : "") + (v < 0 ? " neg" : "") + '">' + (v ? esc(fmt(v)) : "") + '</td>';
     const fmt = v => (v < 0 ? "-" : "") + "$" + Math.round(Math.abs(v)).toLocaleString();
     const curM = R.year === +today().slice(0, 4) ? +today().slice(5, 7) - 1 : -1;
@@ -738,7 +777,7 @@
     // Start the grid scrolled to this month (the months before it are often empty).
     setTimeout(() => $$(".fin-gridwrap").forEach(w => { const th = $("th.cur", w); if (th && !w.dataset.scrolled) { w.dataset.scrolled = "1"; w.scrollLeft = Math.max(0, th.offsetLeft - $(".fin-rh", w).offsetWidth - 8); } }), 0);
     const html = yearNav(y) + (R.sections.some(s => s.rows.length) ? table + reportList(R) : '<div class="card"><div class="empty">Nothing for ' + R.year + ' yet.</div></div>') +
-      '<p class="hint">Remaining = income minus every bill group. <span class="proj-key">Gray</span> amounts are projected from the schedule (no entry made yet). Skipped entries count as $0.</p>' + other;
+      '<p class="hint">Whole dollars, rounded up. Remaining = income minus every bill group. <span class="proj-key">Gray</span> amounts are projected from the schedule (no entry made yet). Skipped entries count as $0.</p>' + other;
     return { title: "Reports", back: true, html: html };
   }
   // Phones: each line shows its year total; tap it to see the months as rows.
@@ -768,8 +807,12 @@
     const kinds = ((ctx.schema("accounts").fields.find(f => f.name === "Kind") || {}).options || []), on = D().paidFromKinds || [];
     const paidFrom = C.isAdmin() && Array.isArray(D().paidFromKinds) ? section("Paid From shows these account kinds", '<div class="card fin-pf">' + kinds.map(k => '<label class="check"><input type="checkbox" data-fin-pf value="' + esc(k) + '"' + (on.indexOf(k) !== -1 ? " checked" : "") + '> ' + esc(k) + '</label>').join("") +
       '<div class="hint">Admins only. A bill already paid from another kind keeps it.</div></div>') : "";
+    const nm = Number(D().nextMonthDays) || 7;
+    const nextMonth = C.isAdmin() && D().nextMonthDays !== undefined ? section("Income that counts toward next month", '<div class="card fin-pf"><label for="fin_nm">A payment in the last</label>' +
+      '<select id="fin_nm" data-fin-nm>' + Array.from({ length: 15 }, (_, i) => i + 1).map(n => '<option value="' + n + '"' + (n === nm ? " selected" : "") + '>' + plural(n, "day") + '</option>').join("") + '</select><span>of a month counts in the next month.</span>' +
+      '<div class="hint">For income sources with “Counts toward next month” ticked. Admins only.</div></div>') : "";
     return { title: "Dropdown lists", back: true, html: '<div class="card list">' + names.map(n => '<a class="list-item" href="#/financial/list/' + encodeURIComponent(n[0]) + '"><span class="thumb">' + IC.tag + '</span><div class="body"><div class="title">' + esc(n[0]) + '</div>' +
-      '<div class="sub">' + esc(listVals(n[0]).join(", ") || n[1]) + '</div></div><span class="thumb">' + ICONS.next + '</span></a>').join("") + '</div>' + paidFrom };
+      '<div class="sub">' + esc(listVals(n[0]).join(", ") || n[1]) + '</div></div><span class="thumb">' + ICONS.next + '</span></a>').join("") + '</div>' + paidFrom + nextMonth };
   }
 
   function view(args) {
@@ -858,6 +901,7 @@
     if (!t || !t.matches || C.parseRoute().name !== "financial") return;
     if (t.matches("[data-fin='days']")) { fin.days = +t.value; C.render(); }
     if (t.matches("[data-fin='method']")) { fin.method[t.dataset.id] = t.value; C.render(); }
+    if (t.matches("[data-fin-nm]")) ctx.save("financial.setNextMonth", { days: +t.value }, "Saved").catch(err => { toast(err.message, true); C.render(); });
     if (t.matches("[data-fin-pf]")) {
       const kinds = $$("[data-fin-pf]").filter(x => x.checked).map(x => x.value);
       if (!kinds.length) { t.checked = true; toast("Keep at least one account kind.", true); return; }
