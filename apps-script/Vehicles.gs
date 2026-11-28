@@ -87,7 +87,8 @@ function vehiclesDef_() {
                { name: "Feature ID", label: "Feature", type: "ref", ref: "features", required: true },
                { name: "Value", type: "text", hint: "Only for value features (e.g. 255/45R20)" }
             ] },
-         parts: { tab: "Parts", label: "Parts", id: "Part ID", prefix: "PRT-", kind: "record", area: "vehicles",
+         // Parts are maintenance info: they belong to Service & Maintenance (as does the Part dropdown).
+         parts: { tab: "Parts", label: "Parts", id: "Part ID", prefix: "PRT-", kind: "record", area: "service",
             title: r => r["Part"],
             fields: [
                { name: "Vehicle ID", label: "Vehicle", type: "ref", ref: "vehicles", required: true },
@@ -194,7 +195,7 @@ function vehiclesDef_() {
                { name: "Notes", type: "text" }
             ] },
          lists: { tab: "Lists", label: "Dropdown Lists", id: "List Value ID", prefix: "LST-", kind: "list", area: "vehicles",
-            listAreas: { "Service Category": "service" },
+            listAreas: { "Service Category": "service", "Part": "service" },
             unique: ["List", "Value"], title: r => r["List"] + ": " + r["Value"],
             fields: [
                { name: "List", type: "text", required: true },
@@ -402,7 +403,7 @@ function vehiclesLoad_(req, user) {
       vehicles: modRows_(def, "vehicles"), lists: modRows_(def, "lists"), places: modRows_(def, "places"),
       features: modRows_(def, "features"), actions: modRows_(def, "actions"),
       vfeatures: see("vehicles") ? modRows_(def, "vfeatures") : [], plates: see("vehicles") ? modRows_(def, "plates") : [],
-      parts: see("vehicles") ? modRows_(def, "parts") : [],
+      parts: see("vehicles") || see("service") ? modRows_(def, "parts") : [],
       visits: [], lines: [], odometer: [], intervals: [], policies: [], cards: [], registrations: [],
       status: {}, current: {}, today: vehToday_(), loans: {}
    };
