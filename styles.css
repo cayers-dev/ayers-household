@@ -1192,3 +1192,5 @@ a.tel-link:active { opacity: .7; }
 .share-email label { font-weight: 600; font-size: 14px; }
 .share-row { display: flex; gap: 8px; margin-top: 6px; }
 .share-row select { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); font: inherit; }
+.topbar h1 { min-width: 0; }
+.topbar .step-nav .icon-btn { width: 34px; }

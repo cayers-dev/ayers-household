@@ -9,7 +9,7 @@
   const CFG = window.HH_CONFIG || {};
   const TOKEN_KEY = "hh_id_token";     // Google sign-in pass (only until the server gives a session)
   const SESSION_KEY = "hh_session";    // the app's own session: { token, exp }
-  const APP_VERSION = "37";
+  const APP_VERSION = "38";
 
   const state = {
     token: null, session: null, sessionExp: 0,
@@ -394,6 +394,51 @@
     return { name: parts[0] || "home", args: parts.slice(1) };
   }
 
+  // ------------------------------------------------------------------
+  // Step through records: every list remembers the order of the record links it shows
+  // ("#/financial/bill/BIL-3" → group "financial/bill"), and a record page from that list gets
+  // ‹ 3 / 12 › in the top bar, swipe left / right and the arrow keys to go to the next one.
+  // Works for any screen that links to records this way, so new sections get it automatically.
+  // ------------------------------------------------------------------
+  let ORDERS = {};
+  try { ORDERS = JSON.parse(sessionStorage.getItem("hh_orders") || "{}") || {}; } catch (e) { ORDERS = {}; }
+  const hashParts = h => String(h || "").replace(/^#\/?/, "").split("/").filter(Boolean);
+  function rememberOrders(root) {
+    const here = hashParts(location.hash).join("/");
+    const groups = {};
+    $$('a[href^="#/"]', root).forEach(a => {
+      const p = hashParts(a.getAttribute("href"));
+      if (p.length < 2) return;
+      const key = p.slice(0, -1).join("/"), id = p[p.length - 1];
+      (groups[key] = groups[key] || []).indexOf(id) === -1 && groups[key].push(id);
+    });
+    let changed = false;
+    Object.keys(groups).forEach(k => {
+      if (groups[k].length < 2) return;
+      if (here === k || here.indexOf(k + "/") === 0) return;   // on one of its records: keep the list's order
+      ORDERS[k] = groups[k]; changed = true;
+    });
+    if (changed) { try { sessionStorage.setItem("hh_orders", JSON.stringify(ORDERS)); } catch (e) { } }
+  }
+  // The step for the current route: { pos, total, prev, next } or null.
+  function stepFor(hash) {
+    const p = hashParts(hash);
+    for (let k = p.length - 1; k >= 1; k--) {
+      const key = p.slice(0, k).join("/"), id = p[k], list = ORDERS[key];
+      const i = list ? list.indexOf(id) : -1;
+      if (i === -1) continue;
+      const suffix = p.slice(k + 1).map(encodeURIComponent).join("/");
+      const href = j => "#/" + p.slice(0, k).map(encodeURIComponent).join("/") + "/" + encodeURIComponent(list[j]) + (suffix ? "/" + suffix : "");
+      return { pos: i + 1, total: list.length, prev: i > 0 ? href(i - 1) : "", next: i < list.length - 1 ? href(i + 1) : "" };
+    }
+    return null;
+  }
+  const stepNavHtml = st => !st || st.total < 2 ? "" :
+    '<div class="step-nav"><button class="icon-btn" data-act="step" data-to="' + esc(st.prev) + '" aria-label="Previous"' + (st.prev ? "" : " disabled") + '>' + ICONS.back + '</button>' +
+    '<span class="step-pos">' + st.pos + ' / ' + st.total + '</span>' +
+    '<button class="icon-btn" data-act="step" data-to="' + esc(st.next) + '" aria-label="Next"' + (st.next ? "" : " disabled") + '>' + ICONS.next + '</button></div>';
+  function goStep(to) { if (to) { location.replace(to); } }
+
   function renderShell() {
     const route = parseRoute();
     const adminOnly = ["admin", "users", "perms", "modules", "log"];
@@ -418,6 +463,7 @@
       '<header class="topbar">' +
         (view.back ? '<button class="icon-btn" data-act="back" aria-label="Back">' + ICONS.back + '</button>' : '<span style="width:6px"></span>') +
         '<h1>' + esc(view.title) + '</h1>' +
+        (view.back && !view.noStep ? stepNavHtml(state.step = stepFor(location.hash)) : (state.step = null, "")) +
         '<button class="icon-btn" data-act="refresh" aria-label="Refresh">' + ICONS.refresh + '</button>' +
       '</header>' +
       '<main class="view' + (view.wide ? " wide" : "") + '">' + view.html + '</main>' +
@@ -425,6 +471,7 @@
         tabs.map(t => '<a href="#/' + t[0] + '" class="' + (tab === t[0] ? "active" : "") + '">' + ICONS[t[2]] + '<span>' + t[1] + '</span></a>').join("") +
       '</nav>';
     if (view.after) view.after();
+    rememberOrders($("main.view"));
     window.scrollTo(0, view.keepScroll ? window.scrollY : 0);
   }
 
@@ -705,7 +752,7 @@
     }).join("");
     const dirty = JSON.stringify(sortObj(picks)) !== JSON.stringify(sortObj(permsOf(userId)));
     return {
-      title: u.name, back: true, keepScroll: true,
+      title: u.name, back: true, keepScroll: true, noStep: true,   // unsaved picks would be lost
       html: '<p class="hint" style="margin:0 4px 10px">' + esc(u.id + " " + u.name) + (u.active ? "" : " (can't sign in right now)") + '. Pick a role for each module; open a module\'s areas to give a different role for part of it.</p>' +
         blocks +
         '<div class="actions perm-save"><button class="btn primary" data-act="perm-save"' + (dirty ? "" : " disabled") + '>' + ICONS.check + 'Save permissions</button>' +
@@ -860,6 +907,26 @@
   // ------------------------------------------------------------------
   // Events
   // ------------------------------------------------------------------
+  // Swipe left / right on a record page (not inside something that scrolls sideways or a form).
+  let swipe = null;
+  document.addEventListener("touchstart", e => {
+    if (!state.step || e.touches.length !== 1 || $(".sheet-backdrop")) { swipe = null; return; }
+    const t = e.target;
+    if (t.closest("input, select, textarea, .segmented, .fin-gridwrap, .wk-ts-wrap, .hk-scroll, [data-no-swipe]") || !t.closest("main.view")) { swipe = null; return; }
+    swipe = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
+  }, { passive: true });
+  document.addEventListener("touchend", e => {
+    if (!swipe || !state.step) return;
+    const dx = e.changedTouches[0].clientX - swipe.x, dy = e.changedTouches[0].clientY - swipe.y;
+    const ok = Math.abs(dx) > 70 && Math.abs(dx) > 2 * Math.abs(dy) && Date.now() - swipe.t < 700;
+    swipe = null;
+    if (ok) goStep(dx < 0 ? state.step.next : state.step.prev);
+  }, { passive: true });
+  document.addEventListener("keydown", e => {
+    if (!state.step || e.altKey || e.ctrlKey || e.metaKey || $(".sheet-backdrop") || (e.target && e.target.closest && e.target.closest("input, select, textarea, [contenteditable]"))) return;
+    if (e.key === "ArrowLeft") goStep(state.step.prev);
+    if (e.key === "ArrowRight") goStep(state.step.next);
+  });
   document.addEventListener("change", e => {
     if (e.target && e.target.id === "share_to") { const a = $("[data-act='email-link']"); if (a) a.href = shareMail(e.target.value); }
   });
@@ -889,6 +956,7 @@
       }
       case "perm-save": savePerms(); break;
       case "perm-reset": state.permEdit = null; render(); break;
+      case "step": goStep(d.to); break;
       case "copy-link": {
         const done = () => toast("Link copied");
         if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(appUrl()).then(done).catch(() => { const i = $("[data-act='select-link']"); i.select(); document.execCommand("copy"); done(); });

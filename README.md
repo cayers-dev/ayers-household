@@ -36,6 +36,10 @@ Mobile web app for the Ayers household: vehicles, travel hockey, inventory, fina
 
 Front-end files: `app.js` (core), `modules.js` (shared module screens: forms, list managers, deleted items), `hockey.js` (Travel Hockey screens), `shopping.js` (Shopping List), `vehicles.js` (Vehicles), `tasks.js` (Tasks), `financial.js` (Financial), `pets.js` (Pets), `work.js` (Work).
 
+## Conventions
+
+- **Step through records.** Any list that links to records as `#/<module>/<type>/<id>` remembers its order, and the record page shows ‹ 3 / 12 › in the top bar (plus swipe left / right and the arrow keys) to move to the next record without going back to the list. New sections get it automatically by linking their list rows that way. A screen with unsaved edits can opt out with `noStep: true` on its view.
+
 ## Modules
 
 | Key | Module | Status |
