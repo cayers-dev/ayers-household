@@ -9,7 +9,7 @@
   const CFG = window.HH_CONFIG || {};
   const TOKEN_KEY = "hh_id_token";     // Google sign-in pass (only until the server gives a session)
   const SESSION_KEY = "hh_session";    // the app's own session: { token, exp }
-  const APP_VERSION = "36";
+  const APP_VERSION = "37";
 
   const state = {
     token: null, session: null, sessionExp: 0,
@@ -567,8 +567,29 @@
       tile("#/log", ICONS.history, "Change log", A.settings.changeLog ? "On" : "Off") +
       '</div>' +
       '<div class="card" style="margin-top:12px"><label class="check switch-row"><input type="checkbox" data-act="toggle-changelog"' + (A.settings.changeLog ? " checked" : "") + '> ' +
-        '<span><b>Change log</b><span class="hint">Every add, edit and permission change is written to the Change Log tab. Permanent deletes are recorded either way.</span></span></label></div>';
+        '<span><b>Change log</b><span class="hint">Every add, edit and permission change is written to the Change Log tab. Permanent deletes are recorded either way.</span></span></label></div>' +
+      shareCard(A);
     return { title: "Admin", html: html };
+  }
+
+  // ---------- Share the app (Admin) ----------
+  const appUrl = () => location.origin + location.pathname.replace(/index\.html$/, "");
+  function shareMail(to) {
+    const body = "Here's the link to the Ayers Household app:\n" + appUrl() + "\n\n" +
+      "Open it on your phone and sign in with your Google account (it has to be the one on the app's user list).\n" +
+      "Then add it to your Home Screen so it opens like an app: on iPhone tap Share, then Add to Home Screen; on Android open the menu and tap Install app or Add to Home screen.";
+    return "mailto:" + encodeURIComponent(to || "") + "?subject=" + encodeURIComponent("Ayers Household app") + "&body=" + encodeURIComponent(body);
+  }
+  function shareCard(A) {
+    const withEmail = (A.users || []).filter(u => u.active && u.email).sort((a, b) => a.name.localeCompare(b.name));
+    return section("Share the app",
+      '<div class="card share-card"><div class="share-link"><input type="text" readonly value="' + esc(appUrl()) + '" aria-label="App link" data-act="select-link"></div>' +
+      '<div class="actions"><button class="btn primary" data-act="copy-link">' + ICONS.check + 'Copy link</button>' +
+      (navigator.share ? '<button class="btn" data-act="share-link">Share…</button>' : "") + '</div>' +
+      '<div class="share-email"><label for="share_to">Or email it</label><div class="share-row"><select id="share_to"><option value="">Choose in my mail app</option>' +
+      withEmail.map(u => '<option value="' + esc(u.email) + '">' + esc(u.name + " (" + u.email + ")") + '</option>').join("") + '</select>' +
+      '<a class="btn" data-act="email-link" href="' + esc(shareMail("")) + '">Email</a></div>' +
+      '<div class="hint">Opens your mail app with the link and how to add it to a phone\'s Home Screen. Only people on the Users list can sign in.</div></div></div>');
   }
 
   // ---------- Users ----------
@@ -839,6 +860,9 @@
   // ------------------------------------------------------------------
   // Events
   // ------------------------------------------------------------------
+  document.addEventListener("change", e => {
+    if (e.target && e.target.id === "share_to") { const a = $("[data-act='email-link']"); if (a) a.href = shareMail(e.target.value); }
+  });
   document.addEventListener("click", e => {
     const el = e.target.closest("[data-act]");
     if (!el || el.tagName === "SELECT" || (el.tagName === "INPUT" && el.type === "checkbox" && e.type === "click" && el.dataset.act !== "toggle-changelog")) return;
@@ -865,6 +889,14 @@
       }
       case "perm-save": savePerms(); break;
       case "perm-reset": state.permEdit = null; render(); break;
+      case "copy-link": {
+        const done = () => toast("Link copied");
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(appUrl()).then(done).catch(() => { const i = $("[data-act='select-link']"); i.select(); document.execCommand("copy"); done(); });
+        else { const i = $("[data-act='select-link']"); i.select(); document.execCommand("copy"); done(); }
+        break;
+      }
+      case "share-link": navigator.share({ title: "Ayers Household", text: "The Ayers Household app — sign in with your Google account:", url: appUrl() }).catch(() => {}); break;
+      case "select-link": el.select(); break;
       case "toggle-changelog": {
         const on = el.checked;
         state.admin.settings.changeLog = on;
