@@ -450,20 +450,21 @@
         (it["Reminder"] === true ? '<span class="pill">Reminder</span>' : "") + '<span class="thumb">' + ICONS.next + '</span></a>';
     };
     const add = can(K.items, "add") ? '<div class="actions" style="margin:0 0 8px"><button class="btn primary" data-mod-add="' + K.items + '">' + ICONS.plus + 'Add ' + K.one + '</button></div>' : "";
-    let html = add;
-    if (K === KINDS.bills) {
-      const groups = listVals("Group");
-      all.forEach(b => { if (b["Group"] && groups.indexOf(b["Group"]) === -1) groups.push(b["Group"]); });
-      groups.forEach(g => {
-        const gs = all.filter(b => (b["Group"] || "Expenses") === g).sort((a, b) => ended(a) - ended(b) || String(a["Name"]).localeCompare(String(b["Name"])));
-        if (!gs.length) return;
-        const monthly = gs.filter(b => !ended(b)).reduce((s, b) => s + (Number(b["Amount"]) || 0) * perMonth(b), 0);
-        html += section(g, '<div class="card list">' + gs.map(itemRow).join("") + '</div>', '<span class="fin-sum">' + esc(money(monthly)) + ' / mo</span>');
-      });
-      if (!all.length) html += '<div class="card"><div class="empty">No bills yet.</div></div>';
-    } else {
-      html += '<div class="card list">' + (all.slice().sort((a, b) => ended(a) - ended(b) || String(a["Name"]).localeCompare(String(b["Name"]))).map(itemRow).join("") || '<div class="empty">No income sources yet.</div>') + '</div>';
-    }
+    // Sort / group: Group (bills), Category, Paid from / Deposited to, Amount, Next date, Name.
+    const nextOf = it => { const nx = nextOpen(K, it[K.id]); return nx ? String(nx["Due Date"]).slice(0, 10) : ""; };
+    const acctName = it => { const a = byId("accounts", it["Account ID"]); return a ? a["Nickname"] : ""; };
+    const opts = (K === KINDS.bills ? [{ k: "group", label: "Group", group: b => b["Group"] || "Expenses", groupOrder: listVals("Group") }, { k: "category", label: "Category", group: b => b["Category"] }] : [])
+      .concat([{ k: "account", label: K === KINDS.bills ? "Paid from" : "Deposited to", group: acctName },
+        { k: "amount", label: "Amount", value: it => Number(it["Amount"]) || 0, dir: "desc" },
+        { k: "monthly", label: "Monthly cost", value: it => ended(it) ? 0 : (Number(it["Amount"]) || 0) * perMonth(it), dir: "desc" },
+        { k: "next", label: K === KINDS.bills ? "Next due" : "Next received", value: nextOf },
+        { k: "name", label: "Name", value: it => it["Name"] }]);
+    let html = add + M.sortList({
+      key: "financial:" + K.items, rows: all, rowHtml: itemRow, options: opts, def: K === KINDS.bills ? "group" : "name",
+      tie: it => it["Name"], first: (a, b) => ended(a) - ended(b), noun: K.one,
+      subtotal: rs => money(rs.filter(b => !ended(b)).reduce((x, b) => x + (Number(b["Amount"]) || 0) * perMonth(b), 0)) + " / mo",
+      empty: K === KINDS.bills ? "No bills yet." : "No income sources yet."
+    });
     html += '<p class="hint">Entries are made 3 months ahead (and the next one for anything billed less often). Each one turns ' +
       (K === KINDS.bills ? "Due on its date, or Paid if it's on autopay" : "Expected on its date, or Received if it comes in automatically") + '.</p>';
     return { title: K.title, back: true, html: html };
@@ -517,13 +518,20 @@
   }
 
   function viewLoans() {
-    const ls = rows("loans").slice().sort((a, b) => ((D().loanStatus[a["Loan ID"]] || {}).basis === "done") - ((D().loanStatus[b["Loan ID"]] || {}).basis === "done") || String(a["Name"]).localeCompare(String(b["Name"])));
+    const st = l => D().loanStatus[l["Loan ID"]] || {};
+    const loanRow = l => {
+      const s = st(l);
+      return '<a class="list-item fin-loanrow" href="#/financial/loan/' + encodeURIComponent(l["Loan ID"]) + '"><div class="body"><div class="title">' + esc(l["Name"]) + ' <span class="fin-right">' + esc(money(s.remaining)) + '</span></div>' +
+        bar(s.progress) + '<div class="sub">' + esc([instName(l["Institution ID"]), payoffText(s, l), s.monthly ? money(s.monthly) + " / mo" : ""].filter(Boolean).join(" · ")) + '</div></div></a>';
+    };
     const html = (can("loans", "add") ? '<div class="actions" style="margin:0 0 8px"><button class="btn primary" data-mod-add="loans">' + ICONS.plus + 'Add loan</button></div>' : "") +
-      '<div class="card list">' + (ls.map(l => {
-        const s = D().loanStatus[l["Loan ID"]] || {};
-        return '<a class="list-item fin-loanrow" href="#/financial/loan/' + encodeURIComponent(l["Loan ID"]) + '"><div class="body"><div class="title">' + esc(l["Name"]) + ' <span class="fin-right">' + esc(money(s.remaining)) + '</span></div>' +
-          bar(s.progress) + '<div class="sub">' + esc([instName(l["Institution ID"]), payoffText(s, l), s.monthly ? money(s.monthly) + " / mo" : ""].filter(Boolean).join(" · ")) + '</div></div></a>';
-      }).join("") || '<div class="empty">No loans yet.</div>') + '</div>';
+      M.sortList({ key: "financial:loans", rows: rows("loans"), rowHtml: loanRow, def: "name", tie: l => l["Name"], noun: "loan",
+        first: (a, b) => (st(a).basis === "done") - (st(b).basis === "done"),
+        options: [{ k: "name", label: "Name", value: l => l["Name"] }, { k: "remaining", label: "Balance left", value: l => Number(st(l).remaining) || 0, dir: "desc" },
+          { k: "payment", label: "Monthly payment", value: l => Number(st(l).monthly) || 0, dir: "desc" }, { k: "rate", label: "Interest rate", value: l => Number(l["Interest Rate"]) || 0, dir: "desc" },
+          { k: "progress", label: "Paid off %", value: l => Number(st(l).progress) || 0, dir: "desc" }, { k: "lender", label: "Lender", group: l => instName(l["Institution ID"]) }],
+        subtotal: rs => money(rs.reduce((x, l) => x + (Number(st(l).remaining) || 0), 0)) + " left · " + money(rs.reduce((x, l) => x + (Number(st(l).monthly) || 0), 0)) + " / mo",
+        empty: "No loans yet." });
     return { title: "Loans", back: true, html: html };
   }
 
@@ -587,7 +595,21 @@
         (can("cards", "add") ? '<button class="link-btn" data-fin="add-card" data-id="' + esc(a["Account ID"]) + '">+ Card</button>' : "") + '</div>' +
         (cards.length && open(k) ? '<div class="fin-cards">' + cards.map(cardRow).join("") + '</div>' : "") + '</div>';
     };
-    const html = (can("institutions", "add") ? '<div class="actions" style="margin:0 0 8px"><button class="btn primary" data-mod-add="institutions">' + ICONS.plus + 'Add institution</button></div>' : "") +
+    // Sort / group: by institution (the tree), or every account by kind, owner, name or balance.
+    const sortOpts = [{ k: "institution", label: "Institution" }, { k: "kind", label: "Account kind", group: a => a["Kind"] },
+      { k: "owner", label: "Owner", group: a => String(a["Owners"] || "").split(",").filter(Boolean).map(id => M.userName(ctx, id)).join(", ") || "(no owner)" },
+      { k: "name", label: "Account name", value: a => a["Nickname"] }, { k: "balance", label: "Balance", value: a => a["Balance"] === "" ? "" : Number(a["Balance"]), dir: "desc" }];
+    const sch = M.sortChoice("financial:accounts", sortOpts, "institution");
+    const addBtn = can("institutions", "add") ? '<div class="actions" style="margin:0 0 8px"><button class="btn primary" data-mod-add="institutions">' + ICONS.plus + 'Add institution</button></div>' : "";
+    if (sch.opt.k !== "institution") {
+      const balSum = rs => { const b = rs.filter(a => a["Balance"] !== "" && a["Balance"] !== undefined); return b.length ? money(b.reduce((x, a) => x + Number(a["Balance"]), 0)) + " balance" : ""; };
+      const listHtml = addBtn + M.sortList({ key: "financial:accounts", rows: rows("accounts"), options: sortOpts, def: "institution", tie: a => a["Nickname"], noun: "account",
+        first: (a, b) => act(b) - act(a), subtotal: balSum, empty: "No accounts yet.",
+        rowHtml: a => acctRow(a) + '<div class="fin-acct-inst">' + esc(instName(a["Institution ID"])) + '</div>', wrap: inner => '<div class="card list fin-inst">' + inner + '</div>' }) +
+        '<p class="hint">Cards keep only their last 4 digits; accounts keep their last 4, plus a suffix when two share it (1234 S:00). No passwords or expiration dates.</p>';
+      return { title: "Accounts", back: true, html: (lookupOn() ? lookupBox(false) : "") + listHtml };
+    }
+    const html = addBtn + M.sortBar("financial:accounts", sortOpts, sch) +
       (insts.map(i => {
         const accts = rows("accounts").filter(a => a["Institution ID"] === i["Institution ID"]).sort((a, b) => (act(b) - act(a)) || String(a["Nickname"]).localeCompare(String(b["Nickname"])));
         const k = "i:" + i["Institution ID"];
@@ -602,14 +624,21 @@
   }
 
   function viewPlans() {
-    const ps = rows("plans").slice().sort((a, b) => (a["Status"] !== "Active") - (b["Status"] !== "Active") || String(a["Target Date"] || "9999").localeCompare(String(b["Target Date"] || "9999")));
-    const html = (can("plans", "add") ? '<div class="actions" style="margin:0 0 8px"><button class="btn primary" data-mod-add="plans">' + ICONS.plus + 'Add goal</button></div>' : "") +
-      '<div class="card list">' + (ps.map(p => {
-        const s = D().planStatus[p["Plan ID"]] || {};
+    const ps0 = p => D().planStatus[p["Plan ID"]] || {};
+    const planRow = p => {
+        const s = ps0(p);
         return '<a class="list-item fin-loanrow' + (p["Status"] !== "Active" ? " dim" : "") + '" href="#/financial/plan/' + encodeURIComponent(p["Plan ID"]) + '"><div class="body"><div class="title">' + esc(p["Goal"]) +
           ' <span class="fin-right">' + esc(money(s.saved) + (s.target !== null && s.target !== undefined ? " of " + money(s.target) : "")) + '</span></div>' + bar(s.progress) +
           '<div class="sub">' + esc([p["Status"] !== "Active" ? p["Status"] : "", p["Target Date"] ? "By " + day(p["Target Date"]) : "", p["Transfer On"] === true ? "Auto " + money(p["Transfer Amount"]) + " " + String(p["Transfer Frequency"] || "Monthly").toLowerCase() : "", s.needed !== null && s.needed !== undefined ? money(s.needed) + " / mo needed" : ""].filter(Boolean).join(" · ")) + '</div></div></a>';
-      }).join("") || '<div class="empty">No goals yet.</div>') + '</div>';
+    };
+    const html = (can("plans", "add") ? '<div class="actions" style="margin:0 0 8px"><button class="btn primary" data-mod-add="plans">' + ICONS.plus + 'Add goal</button></div>' : "") +
+      M.sortList({ key: "financial:plans", rows: rows("plans"), rowHtml: planRow, def: "target", tie: p => p["Goal"], noun: "goal",
+        first: (a, b) => (a["Status"] !== "Active") - (b["Status"] !== "Active"),
+        options: [{ k: "target", label: "Target date", value: p => p["Target Date"] }, { k: "name", label: "Goal", value: p => p["Goal"] },
+          { k: "saved", label: "Saved so far", value: p => Number(ps0(p).saved) || 0, dir: "desc" }, { k: "progress", label: "Progress %", value: p => Number(ps0(p).progress) || 0, dir: "desc" },
+          { k: "needed", label: "Needed each month", value: p => Number(ps0(p).needed) || 0, dir: "desc" }, { k: "status", label: "Status", group: p => p["Status"] }],
+        subtotal: rs => money(rs.reduce((x, p) => x + (Number(ps0(p).saved) || 0), 0)) + " saved",
+        empty: "No goals yet." });
     return { title: "Plan / Save For", back: true, html: html };
   }
 

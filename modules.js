@@ -494,18 +494,104 @@
     rows.sort(opts.sort || ((a, b) => ((b["Active"] !== false) - (a["Active"] !== false)) ||
       ctx.title(opts.table, a).localeCompare(ctx.title(opts.table, b), undefined, { numeric: true })));
     const canAdd = tableCan(ctx, opts.table, "add", null, opts.list ? { "List": opts.list } : {});
-    const html =
-      (canAdd ? '<div class="actions" style="margin:0 0 12px"><button class="btn primary" data-mod-add="' + esc(opts.table) + '"' +
-        (opts.list ? ' data-list="' + esc(opts.list) + '"' : "") + '>' + ICONS.plus + 'Add</button></div>' : "") +
-      '<div class="card list">' + (rows.map(r =>
+    const rowHtml = r =>
         '<div class="list-item ' + (r["Active"] === false ? "dim" : "") + '" role="button" tabindex="0" data-mod-edit="' + esc(opts.table) + '" data-id="' + esc(r[t.id]) + '">' +
         '<div class="body"><div class="title">' + esc(opts.label ? opts.label(r) : ctx.refLabel(opts.table, r)) + '</div>' +
         (opts.sub && opts.sub(r) ? '<div class="sub">' + esc(opts.sub(r)) + '</div>' : "") +
         (opts.subHtml && opts.subHtml(r) ? '<div class="sub">' + opts.subHtml(r) + '</div>' : "") + '</div>' +
-        (r["Active"] === false ? '<span class="pill">Off</span>' : "") + '</div>').join("") || '<div class="empty">Nothing here yet.</div>') + '</div>' +
+        (r["Active"] === false ? '<span class="pill">Off</span>' : "") + '</div>';
+    // opts.sorts: extra sort / group choices (Name is always first); the list's own order otherwise.
+    const nameOf = r => opts.label ? opts.label(r) : ctx.refLabel(opts.table, r);
+    const listHtml = opts.sorts ? sortList({ key: ctx.key + ":" + opts.table + (opts.list ? ":" + opts.list : ""), rows: rows, rowHtml: rowHtml, def: "name", tie: nameOf,
+        first: (a, b) => (b["Active"] !== false) - (a["Active"] !== false), empty: "Nothing here yet.", subtotal: opts.subtotal,
+        options: [{ k: "name", label: "Name", value: nameOf }].concat(opts.sorts) })
+      : '<div class="card list">' + (rows.map(rowHtml).join("") || '<div class="empty">Nothing here yet.</div>') + '</div>';
+    const html =
+      (canAdd ? '<div class="actions" style="margin:0 0 12px"><button class="btn primary" data-mod-add="' + esc(opts.table) + '"' +
+        (opts.list ? ' data-list="' + esc(opts.list) + '"' : "") + '>' + ICONS.plus + 'Add</button></div>' : "") +
+      listHtml +
       (t.kind === "list" ? '<p class="hint">Deleting one that’s used on old entries turns it off instead, so those entries keep it.</p>' : "");
     return { title: opts.title, back: true, html: html };
   }
+
+  // ------------------------------------------------------------------
+  // Sortable lists: "Sort by" + direction above a list; a "group" choice makes sections with
+  // subtotals. The choice is remembered per list on this device.
+  // opts: { key, rows, rowHtml(row), options: [{ k, label, value(row), dir: "asc"|"desc",
+  //         group(row) → section name, groupOrder: [names] }], def, tie(row) → name for ties,
+  //         first(a, b) → e.g. ended ones last, subtotal(rows) → text for a section header,
+  //         empty: text, wrap(innerHtml) → card html (default card list) }
+  // ------------------------------------------------------------------
+  let SORTS = {};
+  try { SORTS = JSON.parse(localStorage.getItem("hh_sort") || "{}") || {}; } catch (e) { SORTS = {}; }
+  function sortChoice(key, options, def) {
+    const saved = SORTS[key] || {};
+    const opt = options.find(o => o.k === saved.by) || options.find(o => o.k === def) || options[0];
+    const dir = saved.by === opt.k && (saved.dir === "asc" || saved.dir === "desc") ? saved.dir : (opt.dir || "asc");
+    return { opt: opt, dir: dir };
+  }
+  function cmpVals(a, b) {
+    const blank = v => v === "" || v === null || v === undefined || (typeof v === "number" && isNaN(v));
+    if (blank(a) && blank(b)) return 0;
+    if (blank(a)) return 1;
+    if (blank(b)) return -1;
+    if (typeof a === "number" && typeof b === "number") return a - b;
+    return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+  }
+  function sortBar(key, options, ch) {
+    if (options.length < 2) return "";
+    return '<div class="sort-bar"><label for="sort_' + esc(key) + '">Sort by</label><select id="sort_' + esc(key) + '" data-sort-key="' + esc(key) + '">' +
+      options.map(o => '<option value="' + esc(o.k) + '"' + (o.k === ch.opt.k ? " selected" : "") + '>' + esc(o.label) + '</option>').join("") + '</select>' +
+      '<button type="button" class="icon-btn sort-dir" data-sort-dir="' + esc(key) + '" data-dir="' + ch.dir + '" aria-label="' + (ch.dir === "asc" ? "Ascending: tap for descending" : "Descending: tap for ascending") + '">' +
+      (ch.dir === "asc" ? "↑" : "↓") + '</button></div>';
+  }
+  function sortList(o) {
+    const ch = sortChoice(o.key, o.options, o.def), opt = ch.opt, sign = ch.dir === "desc" ? -1 : 1;
+    const tie = o.tie || (() => "");
+    const val = opt.value || tie;
+    const first = o.first || (() => 0);
+    const wrap = o.wrap || (inner => '<div class="card list">' + inner + '</div>');
+    const sorted = o.rows.slice().sort((a, b) => first(a, b) || sign * cmpVals(val(a), val(b)) || cmpVals(tie(a), tie(b)));
+    let body;
+    if (!o.rows.length) body = '<div class="card"><div class="empty">' + esc(o.empty || "Nothing here yet.") + '</div></div>';
+    else if (opt.group) {
+      const names = [];
+      sorted.forEach(r => { const g = opt.group(r) || "Not set"; if (names.indexOf(g) === -1) names.push(g); });
+      const order = opt.groupOrder || [];
+      names.sort((a, b) => {
+        const ia = order.indexOf(a), ib = order.indexOf(b);
+        if (ia !== -1 || ib !== -1) return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+        return (a === "Not set") - (b === "Not set") || sign * cmpVals(a, b);
+      });
+      body = names.map(g => {
+        const rs = sorted.filter(r => (opt.group(r) || "Not set") === g)
+          .sort((a, b) => first(a, b) || (opt.inner ? sign * cmpVals(opt.inner(a), opt.inner(b)) : 0) || cmpVals(tie(a), tie(b)));
+        const st = o.subtotal ? o.subtotal(rs) : "";
+        return C.section(g + " (" + rs.length + ")", wrap(rs.map(o.rowHtml).join("")), st ? '<span class="sort-sub">' + esc(st) + '</span>' : "");
+      }).join("");
+      if (o.subtotal && names.length > 1) body += '<p class="sort-total">' + esc("Total · " + o.subtotal(o.rows)) + '</p>';
+    } else {
+      const st = o.subtotal ? o.subtotal(o.rows) : "";
+      body = (st ? '<p class="sort-total top">' + esc(plural(o.rows.length, o.noun || "item") + " · " + st) + '</p>' : "") + wrap(sorted.map(o.rowHtml).join(""));
+    }
+    return sortBar(o.key, o.options, ch) + body;
+  }
+  const plural = (n, w) => n + " " + (n === 1 ? w : /[^aeiou]y$/.test(w) ? w.slice(0, -1) + "ies" : w + "s");
+  document.addEventListener("change", e => {
+    const sel = e.target.closest && e.target.closest("[data-sort-key]");
+    if (!sel) return;
+    SORTS[sel.dataset.sortKey] = { by: sel.value };
+    try { localStorage.setItem("hh_sort", JSON.stringify(SORTS)); } catch (err) { }
+    C.render();
+  });
+  document.addEventListener("click", e => {
+    const b = e.target.closest && e.target.closest("[data-sort-dir]");
+    if (!b) return;
+    const k = b.dataset.sortDir, sel = document.querySelector('[data-sort-key="' + k + '"]');
+    SORTS[k] = { by: sel ? sel.value : (SORTS[k] || {}).by, dir: b.dataset.dir === "asc" ? "desc" : "asc" };
+    try { localStorage.setItem("hh_sort", JSON.stringify(SORTS)); } catch (err) { }
+    C.render();
+  });
 
   // ------------------------------------------------------------------
   // Deleted items (admins): restore or delete permanently
@@ -561,7 +647,7 @@
     money: money, parseIso: parseIso, isoDay: isoDay, fmtDay: fmtDay, fmtTime: fmtTime, fmtDayTime: fmtDayTime,
     userName: userName, userLabel: userLabel, phone: phone, phoneLink: phoneLink,
     can: can, tableCan: tableCan, fieldHtml: fieldHtml, recordForm: recordForm, confirmSheet: confirmSheet, chooseSheet: chooseSheet,
-    listView: listView, deletedView: deletedView, clearDeleted: key => { delete deletedCache[key]; },
+    listView: listView, deletedView: deletedView, sortList: sortList, cmpVals: cmpVals, sortChoice: sortChoice, sortBar: sortBar, clearDeleted: key => { delete deletedCache[key]; },
     fileHtml: fileHtml, uploadFile: uploadFile, pickedFiles: pickedFiles, wireFiles: wireFiles, filePicker: filePicker, photosToPdf: photosToPdf, wireAddNew: wireAddNew, shownValue: shownValue
   };
 })();

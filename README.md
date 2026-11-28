@@ -39,6 +39,7 @@ Front-end files: `app.js` (core), `modules.js` (shared module screens: forms, li
 ## Conventions
 
 - **Step through records.** Any list that links to records as `#/<module>/<type>/<id>` remembers its order, and the record page shows ‹ 3 / 12 › in the top bar (plus swipe left / right and the arrow keys) to move to the next record without going back to the list. New sections get it automatically by linking their list rows that way. A screen with unsaved edits can opt out with `noStep: true` on its view.
+- **Sortable lists.** Lists use `HH_MOD.sortList` (or `listView` with `sorts`): a "Sort by" choice plus direction above the list, remembered per list on the device. Grouping choices (category, store, person…) make sections with counts and subtotals where amounts make sense, plus a grand total. New lists should offer the sorts that fit their data (name, date, amount, a grouping field).
 
 ## Modules
 

@@ -236,8 +236,16 @@
     // Household tasks always show (under their own heading) on a person's list.
     const household = (w === "mine" || /^USR-/.test(w)) ? all.filter(r => !r["Assigned To"] && !isDone(r)).sort(sorter) : [];
     if (household.length) groups.push(["Household", household]);
-    const body = groups.length ? groups.map(g => '<div class="sh-group"><div class="sh-grouphead' + (g[0] === "Overdue" ? " tk-over" : "") + '">' + esc(g[0]) + '<span>' + g[1].length + '</span></div><div class="card list">' + g[1].map(taskRow).join("") + '</div></div>').join("")
-      : '<div class="card"><div class="empty">' + (w === "shared" ? "No household tasks." : "Nothing to do here.") + '</div></div>';
+    // Sort / group: by due date (Overdue · Today · Next 7 days…), priority, category, person, status or title.
+    const sortOpts = [{ k: "due", label: "Due date" }, { k: "priority", label: "Priority", group: r => r["Priority"] || "Normal", groupOrder: ["High", "Normal", "Low"] },
+      { k: "category", label: "Category", group: r => r["Category"] }, { k: "person", label: "Assigned to", group: r => r["Assigned To"] ? M.userName(ctx, r["Assigned To"]) : "Household" },
+      { k: "status", label: "Status", group: r => r["Status"] }, { k: "title", label: "Title", value: r => r["Title"] }];
+    const sch = M.sortChoice("tasks:list", sortOpts, "due");
+    const emptyMsg = w === "shared" ? "No household tasks." : "Nothing to do here.";
+    const body = sch.opt.k !== "due" ? M.sortList({ key: "tasks:list", rows: open.concat(household.filter(h => open.indexOf(h) === -1)), rowHtml: taskRow, options: sortOpts, def: "due",
+        tie: r => String(r["Due Date"] || "9999") + String(r["Due Time"] || "99") + r["Title"], empty: emptyMsg, noun: "task" })
+      : M.sortBar("tasks:list", sortOpts, sch) + (groups.length ? groups.map(g => '<div class="sh-group"><div class="sh-grouphead' + (g[0] === "Overdue" ? " tk-over" : "") + '">' + esc(g[0]) + '<span>' + g[1].length + '</span></div><div class="card list">' + g[1].map(taskRow).join("") + '</div></div>').join("")
+      : '<div class="card"><div class="empty">' + emptyMsg + '</div></div>');
     const doneHtml = '<label class="check tk-donetoggle"><input type="checkbox" data-tk="showdone"' + (tk.showDone ? " checked" : "") + '> Show completed (' + doneList.length + ')</label>' +
       (tk.showDone && doneList.length ? '<div class="card list">' + doneList.slice(0, 100).map(taskRow).join("") + '</div>' : "");
     const links = M.tableCan(ctx, "lists", "add", null, { "List": "Category" }) ? section("Settings", '<div class="card list">' +

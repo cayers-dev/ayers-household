@@ -277,7 +277,11 @@
     const d = D();
     const s = storeFilter();
     const items = (d.items || []).filter(r => !s || anyStore(r["Store"]) || key(r["Store"]) === key(s));
-    const byName = (a, b) => String(a["Item"]).localeCompare(String(b["Item"]));
+    // Sort within each group: name, newest first, store or quantity (remembered on this device).
+    const sopts = [{ k: "name", label: "Name", value: r => r["Item"] }, { k: "added", label: "Newest first", value: r => r["Added At"], dir: "desc" },
+      { k: "store", label: "Store", value: r => r["Store"] }, { k: "category", label: "Category", value: r => r["Category"] }];
+    const sch = M.sortChoice("shopping:list", sopts, "name"), sval = sch.opt.value, sign = sch.dir === "desc" ? -1 : 1;
+    const byName = (a, b) => sign * M.cmpVals(sval(a), sval(b)) || String(a["Item"]).localeCompare(String(b["Item"]));
     const cats = categories();
     const groups = [];
     const urgent = items.filter(r => r["Urgent"] === true).sort(byName);
@@ -315,7 +319,7 @@
       '<p class="hint">Checked items are also removed when you leave the list (you’ll be asked first).</p>' : "";
     const links = M.tableCan(ctx, "lists", "add", null, { "List": "Store" }) || C.isAdmin()
       ? section("Settings", '<div class="card list sh-links"><a class="list-item" href="#/shopping/lists"><span class="thumb">' + IC.tag + '</span><div class="body"><div class="title">Stores, categories & units</div></div><span class="thumb">' + ICONS.next + '</span></a></div>') : "";
-    const html = chips + addBar + list + clear + links;
+    const html = chips + addBar + M.sortBar("shopping:list", sopts, sch) + list + clear + links;
     return { title: "Shopping List", back: true, html: html, keepScroll: true };
   }
 

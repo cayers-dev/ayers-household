@@ -369,12 +369,18 @@
     const html = (can("receipts", "add") ? '<div class="actions" style="margin:0 0 8px"><button class="btn primary" data-wk="add-receipt">' + ICONS.plus + 'Receipt</button>' +
       '<a class="btn" href="#/work/report/' + year + '">' + IC.chart + ' ' + year + ' report</a></div>' : "") +
       '<div class="segmented">' + years.map(y => '<button class="' + (y === year ? "on" : "") + '" data-wk="go" data-to="#/work/receipts/' + y + '">' + y + '</button>').join("") + '</div>' +
-      section(list.length ? plural(list.length, "receipt") + " · " + M.money(total) : "Receipts", '<div class="card list">' + (list.map(r => {
-        const ls = linesOf(r["Receipt ID"]).filter(l => l["Kind"] === "Item");
-        const whos = people(ls, "Assigned To").map(uname).join(", ");
-        return linkRow("#/work/receipt/" + encodeURIComponent(r["Receipt ID"]), IC.receipt, r["Store"] || "Receipt",
-          [short(r["Date"]), plural(ls.length, "item"), whos].filter(Boolean).join(" · "), '<div class="vh-cost">' + esc(M.money(r["Total"])) + '</div>');
-      }).join("") || '<div class="empty">No receipts in ' + year + '.</div>') + '</div>') +
+      section(list.length ? plural(list.length, "receipt") + " · " + M.money(total) : "Receipts", M.sortList({ key: "work:receipts", rows: list, def: "date", tie: r => r["Date"], noun: "receipt",
+        empty: "No receipts in " + year + ".",
+        options: [{ k: "date", label: "Date", value: r => r["Date"], dir: "desc" }, { k: "total", label: "Total", value: r => Number(r["Total"]) || 0, dir: "desc" },
+          { k: "store", label: "Store", group: r => r["Store"] }, { k: "paid", label: "Paid by", group: r => uname(r["Paid By"]) },
+          { k: "month", label: "Month", group: r => MONTHS_LONG[+String(r["Date"]).slice(5, 7) - 1], groupOrder: MONTHS_LONG }],
+        subtotal: rs => M.money(r2(rs.reduce((x, r) => x + (Number(r["Total"]) || 0), 0))),
+        rowHtml: r => {
+          const ls = linesOf(r["Receipt ID"]).filter(l => l["Kind"] === "Item");
+          const whos = people(ls, "Assigned To").map(uname).join(", ");
+          return linkRow("#/work/receipt/" + encodeURIComponent(r["Receipt ID"]), IC.receipt, r["Store"] || "Receipt",
+            [short(r["Date"]), plural(ls.length, "item"), whos].filter(Boolean).join(" · "), '<div class="vh-cost">' + esc(M.money(r["Total"])) + '</div>');
+        } })) +
       section("Lists", '<div class="card list">' + linkRow("#/work/lists", IC.tag, "Dropdown lists", "Stores, expense categories, rationale…") + '</div>');
     return { title: "Work receipts", back: true, html: html };
   }
@@ -480,7 +486,12 @@
     const html = (can("applications", "add") ? '<div class="actions" style="margin:0 0 8px"><button class="btn primary" data-wk="add-app">' + ICONS.plus + 'Application</button></div>' : "") +
       (overdue ? '<div class="notice">' + esc(plural(overdue, "follow-up") + " overdue") + '</div>' : "") +
       '<div class="segmented">' + chips.map(c => '<button class="' + (c === filter ? "on" : "") + '" data-wk="go" data-to="#/work/apps/' + encodeURIComponent(c) + '">' + esc(c) + ' <span class="wk-n">' + count(c) + '</span></button>').join("") + '</div>' +
-      '<div class="card list">' + (shown.map(appRow).join("") || '<div class="empty">' + (all.length ? "None here." : "No applications yet.") + '</div>') + '</div>' +
+      M.sortList({ key: "work:apps", rows: shown, rowHtml: appRow, def: "followup", noun: "application", empty: all.length ? "None here." : "No applications yet.",
+        tie: a => companyName(a["Company ID"]),
+        options: [{ k: "followup", label: "Follow-up (overdue first)", value: a => { const f = nextFu(a); return f ? f.date : ""; } },
+          { k: "submitted", label: "Date submitted", value: a => a["Date Submitted"] || "", dir: "desc" }, { k: "company", label: "Company", value: a => companyName(a["Company ID"]) },
+          { k: "status", label: "Status", group: a => a["Status"], groupOrder: listVals("Application Status") },
+          { k: "jobs", label: "Number of jobs", value: a => jobsOf(a["Application ID"]).length, dir: "desc" }].concat(D().seesAll.applications ? [{ k: "person", label: "Person", group: a => uname(a["Person"]) }] : []) }) +
       (summary ? section("By year", '<div class="card list">' + summary + '</div>') : "") +
       section("More", '<div class="card list">' + linkRow("#/work/companies", IC.building, "Companies & contacts", plural(rows("companies").length, "company", "companies")) +
         linkRow("#/work/lists", IC.tag, "Dropdown lists", "Statuses, applied through, communication types…") + '</div>');
@@ -522,9 +533,11 @@
   function viewCompanies() {
     const list = rows("companies").slice().sort((a, b) => String(a["Name"]).localeCompare(String(b["Name"])));
     const html = (can("companies", "add") ? '<div class="actions" style="margin:0 0 8px"><button class="btn primary" data-mod-add="companies">' + ICONS.plus + 'Company</button></div>' : "") +
-      '<div class="card list">' + (list.map(c => linkRow("#/work/company/" + encodeURIComponent(c["Company ID"]), IC.building, c["Name"],
-        [plural(rows("applications").filter(a => a["Company ID"] === c["Company ID"]).length, "application"), plural(rows("contacts").filter(k => k["Company ID"] === c["Company ID"]).length, "contact"), c["Industry"]].filter(Boolean).join(" · "))).join("") ||
-        '<div class="empty">No companies yet.</div>') + '</div>';
+      M.sortList({ key: "work:companies", rows: list, def: "name", tie: c => c["Name"], noun: "company", empty: "No companies yet.",
+        options: [{ k: "name", label: "Name", value: c => c["Name"] }, { k: "apps", label: "Applications", value: c => rows("applications").filter(a => a["Company ID"] === c["Company ID"]).length, dir: "desc" },
+          { k: "industry", label: "Industry", group: c => c["Industry"] }],
+        rowHtml: c => linkRow("#/work/company/" + encodeURIComponent(c["Company ID"]), IC.building, c["Name"],
+          [plural(rows("applications").filter(a => a["Company ID"] === c["Company ID"]).length, "application"), plural(rows("contacts").filter(k => k["Company ID"] === c["Company ID"]).length, "contact"), c["Industry"]].filter(Boolean).join(" · ")) });
     return { title: "Companies", back: true, html: html };
   }
   function viewCompany(id) {

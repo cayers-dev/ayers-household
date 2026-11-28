@@ -275,19 +275,21 @@
     const rows = d.earnings.filter(e => !hk.earnMine || e["Added By"] === me)
       .sort((a, b) => String(b["Date"]).localeCompare(String(a["Date"])) || String(b["Added At"]).localeCompare(String(a["Added At"])));
     const total = rows.reduce((s, e) => s + (Number(e["Amount"]) || 0), 0);
-    const byDay = {};
-    rows.forEach(e => { (byDay[e["Date"]] = byDay[e["Date"]] || []).push(e); });
-    const groups = Object.keys(byDay).sort().reverse().map(day =>
-      '<div class="hk-group"><div class="hk-grouphead"><span>' + esc(fmtDay(day)) + '</span><span>' + money(byDay[day].reduce((s, e) => s + Number(e["Amount"] || 0), 0)) + '</span></div>' +
-      byDay[day].map(e => '<div class="list-item" role="button" tabindex="0" data-mod-edit="earnings" data-id="' + esc(e["Earning ID"]) + '">' +
+    const earnRow = e => '<div class="list-item" role="button" tabindex="0" data-mod-edit="earnings" data-id="' + esc(e["Earning ID"]) + '">' +
         '<div class="body"><div class="title">' + esc(e["Chore Name"]) + '</div><div class="sub">' +
-        esc([e["Added By"] !== me ? M.userName(ctx, e["Added By"]) : "", e["Notes"]].filter(Boolean).join(" · ")) + '</div></div>' +
-        '<span class="hk-amt">' + money(e["Amount"]) + '</span></div>').join("") + '</div>').join("");
+        esc([fmtDay(e["Date"]), e["Added By"] !== me ? M.userName(ctx, e["Added By"]) : "", e["Notes"]].filter(Boolean).join(" · ")) + '</div></div>' +
+        '<span class="hk-amt">' + money(e["Amount"]) + '</span></div>';
+    const dayLabels = Array.from(new Set(rows.map(e => e["Date"]))).sort().reverse().map(x => fmtDay(x));
+    const listHtml = M.sortList({ key: "hockey:earnings", rows: rows, rowHtml: earnRow, def: "day", tie: e => e["Date"] + (e["Added At"] || ""), noun: "entry",
+      empty: "No chores logged yet this season.",
+      options: [{ k: "day", label: "Day", group: e => fmtDay(e["Date"]), groupOrder: dayLabels, dir: "desc" }, { k: "chore", label: "Chore", group: e => e["Chore Name"] },
+        { k: "person", label: "Logged by", group: e => M.userName(ctx, e["Added By"]) }, { k: "amount", label: "Amount", value: e => Number(e["Amount"]) || 0, dir: "desc" }],
+      subtotal: rs => money(rs.reduce((x, e) => x + (Number(e["Amount"]) || 0), 0)) });
     const html = seasonPicker() +
       '<div class="hk-toolbar">' + (can("earnings", "add") ? '<button class="btn primary" data-hk="log">' + ICONS.plus + 'Log a chore</button>' : "") +
         '<label class="check"><input type="checkbox" data-hk="earn-mine"' + (hk.earnMine ? " checked" : "") + '> Only mine</label></div>' +
       '<div class="card hk-total"><span>' + plural(rows.length, "entry", "entries") + '</span><b>' + money(total) + '</b></div>' +
-      (groups ? '<div class="card list">' + groups + '</div>' : '<div class="card"><div class="empty">No chores logged yet this season.</div></div>');
+      listHtml;
     return { title: "Earnings", back: true, html: html };
   }
 
@@ -488,12 +490,15 @@
         '<div><span>Billable</span><b>' + money(billable) + '</b></div>' +
         '<div><span>Non-billable</span><b>' + money(nonb) + '</b></div>' +
         '<div><span>Player’s ' + pct + '% share</span><b>' + money(billable * pct / 100) + '</b></div></div>' +
-      (rows.length ? '<div class="card list">' + rows.map(e =>
-        '<div class="list-item" role="button" tabindex="0" data-mod-edit="expenses" data-id="' + esc(e["Expense ID"]) + '">' +
-        '<div class="body"><div class="title">' + esc(e["Item"] || e["Category"]) + '</div>' +
-        '<div class="sub">' + esc([fmtDay(e["Date"], { weekday: undefined, year: "numeric" }), e["Item"] ? e["Category"] : "", venueLine(e["Location ID"])].filter(Boolean).join(" · ")) + '</div></div>' +
-        '<span class="hk-amt">' + money(e["Amount"]) + (e["Non-Billable"] ? '<small>non-billable</small>' : "") + '</span></div>').join("") + '</div>'
-        : '<div class="card"><div class="empty">No expenses yet this season.</div></div>');
+      M.sortList({ key: "hockey:expenses", rows: rows, def: "date", tie: e => e["Date"], noun: "expense", empty: "No expenses yet this season.",
+        options: [{ k: "date", label: "Date", value: e => e["Date"], dir: "desc" }, { k: "amount", label: "Amount", value: e => Number(e["Amount"]) || 0, dir: "desc" },
+          { k: "category", label: "Category", group: e => e["Category"] }, { k: "venue", label: "Location", group: e => venueLine(e["Location ID"]) },
+          { k: "billable", label: "Billable / non-billable", group: e => e["Non-Billable"] ? "Non-billable" : "Billable", groupOrder: ["Billable", "Non-billable"] }],
+        subtotal: rs => money(sum(rs)),
+        rowHtml: e => '<div class="list-item" role="button" tabindex="0" data-mod-edit="expenses" data-id="' + esc(e["Expense ID"]) + '">' +
+          '<div class="body"><div class="title">' + esc(e["Item"] || e["Category"]) + '</div>' +
+          '<div class="sub">' + esc([fmtDay(e["Date"], { weekday: undefined, year: "numeric" }), e["Item"] ? e["Category"] : "", venueLine(e["Location ID"])].filter(Boolean).join(" · ")) + '</div></div>' +
+          '<span class="hk-amt">' + money(e["Amount"]) + (e["Non-Billable"] ? '<small>non-billable</small>' : "") + '</span></div>' });
     return { title: "Expenses", back: true, html: html };
   }
 
@@ -633,7 +638,7 @@
     const nice = listName === "Expense Category" ? "Expense categories" : listName === "Event Type" ? "Event types" : listName === "Sport" ? "Sports" : listName;
     if (!settingsOk() || (sch.adminOnly && table === "settings" && !C.isAdmin()) || !M.can(ctx, area, "view")) return noAccess(nice || titles[table] || "that list");
     const opts = { table: table, list: listName, title: listName ? (listName === "Expense Category" ? "Expense categories" : listName === "Event Type" ? "Event types" : listName === "Sport" ? "Sports" : listName) : titles[table] || table };
-    if (table === "chores") { opts.label = r => r["Chore"]; opts.sub = r => money(r["Amount"]); }
+    if (table === "chores") { opts.label = r => r["Chore"]; opts.sub = r => money(r["Amount"]); opts.sorts = [{ k: "amount", label: "Price", value: r => Number(r["Amount"]) || 0, dir: "desc" }]; }
     if (table === "consequences") { opts.sort = (a, b) => a["Level"] - b["Level"]; opts.sub = r => "Applies from level " + r["Level"]; opts.label = r => r["Consequence"]; }
     if (table === "seasons") { opts.sort = (a, b) => String(b["Start Date"]).localeCompare(String(a["Start Date"])); opts.sub = r => fmtDay(r["Start Date"], { weekday: undefined, year: "numeric" }) + " – " + fmtDay(r["End Date"], { weekday: undefined, year: "numeric" }) + " · " + r["Share %"] + "% · " + (r["Tracking"] || "Weekly") + (r["Consequences Off"] === true ? " · consequences off" : ""); opts.label = r => seasonLabel(r); }
     if (table === "settings") {

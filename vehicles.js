@@ -308,7 +308,11 @@
     ].filter(l => see(l[3])).map(l => '<a class="list-item" href="' + l[0] + '"><span class="thumb">' + IC.tag + '</span><div class="body"><div class="title">' + esc(l[1]) + '</div>' +
       (l[2] ? '<div class="sub">' + esc(l[2]) + '</div>' : "") + '</div><span class="thumb">' + ICONS.next + '</span></a>').join("");
     const html = ins +
-      section("Vehicles", '<div class="card list">' + (active.map(vRow).join("") || '<div class="empty">No vehicles yet.</div>') + '</div>', add ? add.replace('class="btn"', 'class="link-btn"').replace(ICONS.plus, "+ ") : "") +
+      section("Vehicles", M.sortList({ key: "vehicles:list", rows: active, rowHtml: vRow, def: "name", tie: v => vName(v), noun: "vehicle", empty: "No vehicles yet.",
+        options: [{ k: "name", label: "Name", value: v => vName(v) }, { k: "year", label: "Year", value: v => Number(v["Year"]) || "", dir: "desc" },
+          { k: "driver", label: "Primary driver", group: v => v["Primary Driver"] ? M.userName(ctx, v["Primary Driver"]) : "(no driver)" },
+          { k: "make", label: "Make", group: v => v["Make"] }].concat(see("service") ? [{ k: "due", label: "Next service due", value: v => { const nd = nextDue(v["Vehicle ID"]); return nd && nd.dueDate ? nd.dueDate : ""; } }] : []) }),
+        add ? add.replace('class="btn"', 'class="link-btn"').replace(ICONS.plus, "+ ") : "") +
       fuHtml +
       (gone.length ? section("Sold", '<div class="card list">' + gone.map(vRow).join("") + '</div>') : "") +
       (links ? section("Lists & settings", '<div class="card list">' + links + '</div>') : "") +
@@ -400,12 +404,16 @@
     }).join("");
     const ivHtml = '<div class="card list">' + (ivs || '<div class="empty">No intervals set.</div>') + '</div>' +
       (st.intervals.some(s => s.estimated) ? '<p class="hint">“est.” = estimated from average miles per month.</p>' : "");
-    const visits = rows("visits").filter(x => x["Vehicle ID"] === vid).sort((a, b) => String(b["Date"]).localeCompare(String(a["Date"])));
-    const vHtml = '<div class="card list">' + (visits.map(x => {
+    const visits = rows("visits").filter(x => x["Vehicle ID"] === vid);
+    const vHtml = M.sortList({ key: "vehicles:visits", rows: visits, def: "date", tie: x => x["Date"], noun: "visit", empty: "No service visits yet.",
+      options: [{ k: "date", label: "Date", value: x => x["Date"], dir: "desc" }, { k: "cost", label: "Cost", value: x => x["Total"] === "" ? "" : Number(x["Total"]), dir: "desc" },
+        { k: "shop", label: "Shop", group: x => placeName(x["Shop"]) }, { k: "miles", label: "Mileage", value: x => x["Mileage"] === "" ? "" : Number(x["Mileage"]), dir: "desc" }],
+      subtotal: rs => { const t = rs.filter(x => x["Total"] !== ""); return t.length ? M.money(t.reduce((a, x) => a + Number(x["Total"]), 0)) : ""; },
+      rowHtml: x => {
       const ls = rows("lines").filter(l => l["Visit ID"] === x["Visit ID"] && l["Kind"] === "Service").map(l => actionName(l["Action ID"]) || l["Description"] || l["Category"]).filter(Boolean);
       return '<a class="list-item" href="#/vehicles/visit/' + encodeURIComponent(x["Visit ID"]) + '"><div class="body"><div class="title">' + esc(day(x["Date"])) + (x["Total"] !== "" ? ' · ' + esc(M.money(x["Total"])) : "") + '</div>' +
         '<div class="sub">' + esc([miles(x["Mileage"]), placeName(x["Shop"]), ls.join(", ")].filter(Boolean).join(" · ")) + '</div></div><span class="thumb">' + ICONS.next + '</span></a>';
-    }).join("") || '<div class="empty">No service visits yet.</div>') + '</div>';
+    } });
     const odo = rows("odometer").filter(o => o["Vehicle ID"] === vid).sort((a, b) => String(b["Date"]).localeCompare(String(a["Date"]))).slice(0, 5);
     const oHtml = odo.length ? section("Odometer entries", '<div class="card list">' + odo.map(o => '<div class="list-item" role="button" tabindex="0" data-mod-edit="odometer" data-id="' + esc(o["Reading ID"]) + '"><div class="body"><div class="title">' + esc(miles(o["Mileage"])) + '</div><div class="sub">' + esc([day(o["Date"]), o["Notes"]].filter(Boolean).join(" · ")) + '</div></div></div>').join("") + '</div>') : "";
     return top + section("Service intervals", ivHtml, can("intervals", "add") ? '<button class="link-btn" data-vh="add-interval" data-id="' + esc(vid) + '">+ Add</button>' : "") +
@@ -520,7 +528,7 @@
       case "visit": return viewVisit(args[1]);
       case "cards": return viewCards();
       case "card": return viewCard(args[1]);
-      case "places": return M.listView(ctx, { table: "places", title: "Places", label: r => r["Name"], subHtml: r => [esc(r["Type"] || ""), r["Phone"] ? M.phoneLink(r["Phone"]) : "", esc(r["Address"] || "")].filter(Boolean).join(" · ") });
+      case "places": return M.listView(ctx, { table: "places", title: "Places", label: r => r["Name"], sorts: [{ k: "type", label: "Type", group: r => r["Type"] }], subHtml: r => [esc(r["Type"] || ""), r["Phone"] ? M.phoneLink(r["Phone"]) : "", esc(r["Address"] || "")].filter(Boolean).join(" · ") });
       case "features": return M.listView(ctx, { table: "features", title: "Features", label: r => r["Feature"], sub: r => r["Kind"] === "Value" ? "Value" : "" });
       case "actions": return viewActions();
       case "lists": return viewLists();

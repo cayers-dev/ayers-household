@@ -211,7 +211,10 @@
       .filter(l => see(l[3])).map(l => '<a class="list-item" href="' + l[0] + '"><span class="thumb">' + IC.tag + '</span><div class="body"><div class="title">' + esc(l[1]) + '</div><div class="sub">' + esc(l[2]) + '</div></div><span class="thumb">' + ICONS.next + '</span></a>').join("");
     const add = can("pets", "add") ? '<button class="link-btn" data-mod-add="pets">+ Add pet</button>' : "";
     const html = (tiles ? '<div class="home-grid vh-tiles">' + tiles + '</div>' : "") +
-      section("Pets", '<div class="card list">' + (live.map(petRow).join("") || '<div class="empty">No pets yet.</div>') + '</div>', add) + due + fuHtml +
+      section("Pets", M.sortList({ key: "pets:list", rows: live, rowHtml: petRow, def: "name", tie: p => p["Name"], noun: "pet", empty: "No pets yet.",
+        options: [{ k: "name", label: "Name", value: p => p["Name"] }, { k: "species", label: "Species", group: p => p["Species"] },
+          { k: "age", label: "Age (oldest first)", value: p => p["Birth Date"] || "" }, { k: "person", label: "Primary person", group: p => p["Primary Person"] ? M.userName(ctx, p["Primary Person"]) : "(no one)" }]
+          .concat(see("care") ? [{ k: "due", label: "Next due", value: p => { const n = nextFor(p["Pet ID"]); return n ? st(n["Schedule ID"]).next : ""; } }] : []) }), add) + due + fuHtml +
       (gone.length ? section("Past pets", '<div class="card list">' + gone.map(petRow).join("") + '</div>') : "") +
       (links ? section("Lists & settings", '<div class="card list">' + links + '</div>') : "") +
       (C.isAdmin() ? '<p class="hint"><a href="#/pets/deleted">Deleted items</a></p>' : "");
@@ -276,11 +279,14 @@
   }
 
   function petVisits(p) {
-    const vs = rows("visits").filter(v => v["Pet ID"] === p["Pet ID"]).sort((a, b) => String(b["Date"]).localeCompare(String(a["Date"])));
+    const vs = rows("visits").filter(v => v["Pet ID"] === p["Pet ID"]);
     return (can("visits", "add") ? '<div class="actions" style="margin:0 0 4px"><button class="btn primary" data-pt="add-visit" data-id="' + esc(p["Pet ID"]) + '">' + ICONS.plus + 'Vet visit</button></div>' : "") +
-      '<div class="card list">' + (vs.map(v => '<a class="list-item" href="#/pets/visit/' + encodeURIComponent(v["Visit ID"]) + '"><span class="thumb">' + IC.vet + '</span><div class="body"><div class="title">' + esc(day(v["Date"]) + " · " + (v["Reason"] || "Visit")) + '</div>' +
-        '<div class="sub">' + esc([placeName(v["Vet"]), v["Cost"] !== "" ? M.money(v["Cost"]) : "", v["Follow Up"] && v["Follow Up Done"] !== true ? "Follow-up open" : ""].filter(Boolean).join(" · ")) + '</div></div><span class="thumb">' + ICONS.next + '</span></a>').join("") ||
-        '<div class="empty">No vet visits yet.</div>') + '</div>';
+      M.sortList({ key: "pets:visits", rows: vs, def: "date", tie: v => v["Date"], noun: "visit", empty: "No vet visits yet.",
+        options: [{ k: "date", label: "Date", value: v => v["Date"], dir: "desc" }, { k: "cost", label: "Cost", value: v => v["Cost"] === "" ? "" : Number(v["Cost"]), dir: "desc" },
+          { k: "vet", label: "Vet", group: v => placeName(v["Vet"]) }, { k: "reason", label: "Reason", group: v => v["Reason"] }],
+        subtotal: rs => { const c = rs.filter(v => v["Cost"] !== ""); return c.length ? M.money(c.reduce((a, v) => a + Number(v["Cost"]), 0)) : ""; },
+        rowHtml: v => '<a class="list-item" href="#/pets/visit/' + encodeURIComponent(v["Visit ID"]) + '"><span class="thumb">' + IC.vet + '</span><div class="body"><div class="title">' + esc(day(v["Date"]) + " · " + (v["Reason"] || "Visit")) + '</div>' +
+          '<div class="sub">' + esc([placeName(v["Vet"]), v["Cost"] !== "" ? M.money(v["Cost"]) : "", v["Follow Up"] && v["Follow Up Done"] !== true ? "Follow-up open" : ""].filter(Boolean).join(" · ")) + '</div></div><span class="thumb">' + ICONS.next + '</span></a>' });
   }
 
   function viewVisit(id) {
@@ -314,8 +320,8 @@
     switch (args[0] || "") {
       case "p": return viewPet(args[1], args[2] || "");
       case "visit": return viewVisit(args[1]);
-      case "places": return M.listView(ctx, { table: "places", title: "Places", label: r => r["Name"], subHtml: r => [esc(r["Type"] || ""), r["Phone"] ? M.phoneLink(r["Phone"]) : "", esc(r["Address"] || "")].filter(Boolean).join(" · ") });
-      case "treatments": return M.listView(ctx, { table: "treatments", title: "Treatments", label: r => r["Treatment"], sub: r => [r["Kind"], r["Default Every"] ? "usually every " + r["Default Every"] + " " + String(r["Default Unit"] || "").toLowerCase() : ""].filter(Boolean).join(" · ") });
+      case "places": return M.listView(ctx, { table: "places", title: "Places", label: r => r["Name"], sorts: [{ k: "type", label: "Type", group: r => r["Type"] }], subHtml: r => [esc(r["Type"] || ""), r["Phone"] ? M.phoneLink(r["Phone"]) : "", esc(r["Address"] || "")].filter(Boolean).join(" · ") });
+      case "treatments": return M.listView(ctx, { table: "treatments", title: "Treatments", label: r => r["Treatment"], sorts: [{ k: "kind", label: "Kind", group: r => r["Kind"] }], sub: r => [r["Kind"], r["Default Every"] ? "usually every " + r["Default Every"] + " " + String(r["Default Unit"] || "").toLowerCase() : ""].filter(Boolean).join(" · ") });
       case "lists": return viewLists();
       case "list": return M.listView(ctx, { table: "lists", list: args[1], title: args[1] });
       case "deleted": return M.deletedView(ctx);
